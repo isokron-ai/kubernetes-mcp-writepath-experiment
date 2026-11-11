@@ -39,6 +39,81 @@
   {
     "_meta": {
       "io.kubernetes-mcp-server/rbac": {
+        "unbounded": {
+          "reason": "creates SelfSubjectAccessReviews (allowed for every authenticated user) and, with user, SubjectAccessReviews"
+        },
+        "version": "v1alpha1"
+      }
+    },
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true,
+      "title": "Auth: Can I"
+    },
+    "description": "Check whether this server's Kubernetes identity may perform an action, like 'kubectl auth can-i': e.g. verb 'create' on apiVersion 'networking.k8s.io/v1' kind 'NetworkPolicy' in a namespace. Use it before a write that may be refused, or to explain a 403. With user (and groups) it asks about another subject, which needs permission to create SubjectAccessReviews.",
+    "inputSchema": {
+      "properties": {
+        "apiVersion": {
+          "description": "apiVersion of the kind (e.g. v1, apps/v1)",
+          "type": "string"
+        },
+        "context": {
+          "description": "Optional parameter selecting which context to run the tool in. Defaults to fake-context if not set",
+          "type": "string"
+        },
+        "group": {
+          "description": "API group of resource (empty for the core group)",
+          "type": "string"
+        },
+        "groups": {
+          "description": "Groups of user",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "description": "kind (e.g. Pod, Deployment, NetworkPolicy)",
+          "type": "string"
+        },
+        "name": {
+          "description": "Optional name of one object",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "Namespace to ask about; empty asks about all namespaces (or a cluster-scoped kind)",
+          "type": "string"
+        },
+        "resource": {
+          "description": "Instead of apiVersion and kind: the plural resource name (e.g. pods), with group for non-core resources",
+          "type": "string"
+        },
+        "subresource": {
+          "description": "Optional subresource (e.g. log, exec, scale)",
+          "type": "string"
+        },
+        "user": {
+          "description": "Optional other user to ask about (SubjectAccessReview)",
+          "type": "string"
+        },
+        "verb": {
+          "description": "get, list, watch, create, update, patch, delete, deletecollection, or another verb",
+          "type": "string"
+        }
+      },
+      "required": [
+        "verb"
+      ],
+      "type": "object"
+    },
+    "name": "auth_can_i",
+    "title": "Auth: Can I"
+  },
+  {
+    "_meta": {
+      "io.kubernetes-mcp-server/rbac": {
         "none": {},
         "version": "v1alpha1"
       }
