@@ -874,7 +874,9 @@ func (s *ResourcesSuite) TestResourcesDelete() {
 		s.Run("returns success", func() {
 			s.Nilf(err, "call tool failed %v", err)
 			s.Falsef(resourcesDeleteNamespace.IsError, "call tool failed")
-			s.Equalf("Resource deleted successfully", resourcesDeleteNamespace.Content[0].(*mcp.TextContent).Text,
+			// Namespace deletion is asynchronous (the namespace controller empties it first, and envtest
+			// runs none), so the delete is reported as pending rather than done.
+			s.Truef(strings.HasPrefix(resourcesDeleteNamespace.Content[0].(*mcp.TextContent).Text, "Resource deletion pending: Namespace ns-to-delete is terminating"),
 				"invalid tool result content got: %v", resourcesDeleteNamespace.Content[0].(*mcp.TextContent).Text)
 		})
 		s.Run(" deletes Namespace", func() {
@@ -1528,6 +1530,49 @@ func (s *ResourcesSuite) TestResourcesCreateOrUpdateCreateOnly() {
 		})
 		s.Require().NoError(err)
 		s.Falsef(toolResult.IsError, "call tool failed: %v", toolResult.Content)
+	})
+}
+
+func (s *ResourcesSuite) TestResourcesDeleteTellsTheTruth() {
+	s.InitMcpClient()
+	client := kubernetes.NewForConfigOrDie(test.EnvTestRestConfig())
+	s.Run("an object held by a finalizer is reported pending with the finalizer", func() {
+		_, err := client.CoreV1().ConfigMaps("default").Create(s.T().Context(), &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "cm-with-finalizer", Finalizers: []string{"example.com/hold"}},
+		}, metav1.CreateOptions{})
+		s.Require().NoError(err)
+		result, err := s.CallTool("resources_delete", map[string]interface{}{"apiVersion": "v1", "kind": "ConfigMap", "namespace": "default", "name": "cm-with-finalizer"})
+		s.Require().NoError(err)
+		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
+		text := result.Content[0].(*mcp.TextContent).Text
+		s.Contains(text, "Resource deletion pending: ConfigMap default/cm-with-finalizer is marked for deletion")
+		s.Contains(text, "held by finalizers example.com/hold")
+		cm, getErr := client.CoreV1().ConfigMaps("default").Get(s.T().Context(), "cm-with-finalizer", metav1.GetOptions{})
+		s.Require().NoError(getErr)
+		cm.Finalizers = nil
+		_, _ = client.CoreV1().ConfigMaps("default").Update(s.T().Context(), cm, metav1.UpdateOptions{})
+	})
+	s.Run("a uid precondition refuses to delete a recreated object", func() {
+		first, err := client.CoreV1().ConfigMaps("default").Create(s.T().Context(), &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "cm-recreated"}}, metav1.CreateOptions{})
+		s.Require().NoError(err)
+		s.Require().NoError(client.CoreV1().ConfigMaps("default").Delete(s.T().Context(), "cm-recreated", metav1.DeleteOptions{}))
+		_, err = client.CoreV1().ConfigMaps("default").Create(s.T().Context(), &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "cm-recreated"}}, metav1.CreateOptions{})
+		s.Require().NoError(err)
+		result, err := s.CallTool("resources_delete", map[string]interface{}{
+			"apiVersion": "v1", "kind": "ConfigMap", "namespace": "default", "name": "cm-recreated", "uid": string(first.UID),
+		})
+		s.Require().NoError(err)
+		s.True(result.IsError)
+		s.Contains(result.Content[0].(*mcp.TextContent).Text, "precondition failed")
+		_, getErr := client.CoreV1().ConfigMaps("default").Get(s.T().Context(), "cm-recreated", metav1.GetOptions{})
+		s.NoError(getErr, "the recreated object must survive")
+	})
+	s.Run("an unknown propagationPolicy is refused", func() {
+		result, err := s.CallTool("resources_delete", map[string]interface{}{
+			"apiVersion": "v1", "kind": "ConfigMap", "namespace": "default", "name": "whatever", "propagationPolicy": "Cascade",
+		})
+		s.Require().NoError(err)
+		s.True(result.IsError)
 	})
 }
 

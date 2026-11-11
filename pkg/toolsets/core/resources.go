@@ -233,6 +233,19 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
 						Type:        "integer",
 						Description: "Optional duration in seconds before the object should be deleted. Value must be non-negative integer. The value zero indicates delete immediately. If this value is nil, the default grace period for the specified type will be used",
 					},
+					"propagationPolicy": {
+						Type:        "string",
+						Enum:        []any{"Background", "Foreground", "Orphan"},
+						Description: "What happens to dependents (for example a Job's Pods): Background (default, like kubectl delete) deletes them after the object, Foreground before it, Orphan leaves them.",
+					},
+					"uid": {
+						Type:        "string",
+						Description: "Optional precondition: the metadata.uid you read. The delete is refused if the object was deleted and recreated under the same name since.",
+					},
+					"resourceVersion": {
+						Type:        "string",
+						Description: "Optional precondition: the metadata.resourceVersion you read. The delete is refused if the object changed since.",
+					},
 				},
 				Required: []string{"apiVersion", "kind", "name"},
 			},
@@ -596,11 +609,53 @@ func resourcesDelete(params api.ToolHandlerParams) (*api.ToolCallResult, error) 
 		gracePeriodSecondsPtr = &gracePeriodSeconds
 	}
 
-	err = kubernetes.NewCore(params).ResourcesDelete(params, gvk, ns, n, gracePeriodSecondsPtr)
-	if err != nil {
+	p := api.WrapParams(params)
+	opts := kubernetes.DeleteOptions{
+		GracePeriodSeconds: gracePeriodSecondsPtr,
+		PropagationPolicy:  metav1.DeletionPropagation(p.OptionalString("propagationPolicy", string(metav1.DeletePropagationBackground))),
+		UID:                p.OptionalString("uid", ""),
+		ResourceVersion:    p.OptionalString("resourceVersion", ""),
+	}
+	if err := p.Err(); err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to delete resource: %w", err)), nil
 	}
-	return api.NewToolCallResult("Resource deleted successfully", err), nil
+	switch opts.PropagationPolicy {
+	case metav1.DeletePropagationBackground, metav1.DeletePropagationForeground, metav1.DeletePropagationOrphan:
+	default:
+		return api.NewToolCallResult("", fmt.Errorf("failed to delete resource: propagationPolicy must be Background, Foreground or Orphan, got %q", opts.PropagationPolicy)), nil
+	}
+	outcome, err := kubernetes.NewCore(params).ResourcesDeleteWithOptions(params, gvk, ns, n, opts)
+	if err != nil {
+		if (opts.UID != "" || opts.ResourceVersion != "") && apierrors.IsConflict(err) {
+			err = fmt.Errorf("%w (precondition failed: the object was recreated or changed since you read it; nothing was deleted)", err)
+		}
+		return api.NewToolCallResult("", fmt.Errorf("failed to delete resource: %w", err)), nil
+	}
+	return api.NewToolCallResult(deleteOutcomeText(gvk.Kind, ns, n, outcome), nil), nil
+}
+
+// deleteOutcomeText states whether the object is gone or still pending.
+func deleteOutcomeText(kind, namespace, name string, outcome *kubernetes.DeleteOutcome) string {
+	ref := name
+	if namespace != "" {
+		ref = namespace + "/" + name
+	}
+	switch {
+	case outcome.Gone && outcome.RecreatedUID != "":
+		return fmt.Sprintf("Resource deleted successfully; an object of the same name already exists again (%s %s, uid %s), created by someone else", kind, ref, outcome.RecreatedUID)
+	case outcome.Gone:
+		return "Resource deleted successfully"
+	case outcome.Pending && len(outcome.Finalizers) > 0:
+		return fmt.Sprintf("Resource deletion pending: %s %s is marked for deletion (deletionTimestamp %s) but still exists, held by finalizers %s; it disappears when they are removed", kind, ref, outcome.DeletionTimestamp, strings.Join(outcome.Finalizers, ", "))
+	case outcome.Pending:
+		grace := ""
+		if outcome.GracePeriod != nil {
+			grace = fmt.Sprintf(", grace period %ds", *outcome.GracePeriod)
+		}
+		return fmt.Sprintf("Resource deletion pending: %s %s is terminating (deletionTimestamp %s%s) and disappears when that ends", kind, ref, outcome.DeletionTimestamp, grace)
+	default:
+		return "Resource delete accepted; its current state could not be read back"
+	}
 }
 
 func resourcesScale(params api.ToolHandlerParams) (*api.ToolCallResult, error) {

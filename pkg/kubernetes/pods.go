@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 
 	v1 "k8s.io/api/core/v1"
@@ -111,11 +112,19 @@ func (c *Core) PodsDelete(ctx context.Context, namespace, name string) (string, 
 	}.AsSelector()
 
 	// Delete the Pod first: if that is refused, its managed Service and Route stay in place.
-	if err := c.ResourcesDelete(ctx, &schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Pod"}, namespace, name, nil); err != nil {
+	outcome, err := c.ResourcesDeleteWithOptions(ctx, &schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Pod"}, namespace, name, DeleteOptions{})
+	if err != nil {
 		return "", err
 	}
+	message := "Pod deleted successfully"
+	if outcome.Pending {
+		message = fmt.Sprintf("Pod deletion pending: %s/%s is terminating (deletionTimestamp %s); it disappears when its containers have stopped", namespace, name, outcome.DeletionTimestamp)
+		if len(outcome.Finalizers) > 0 {
+			message += ", and its finalizers " + strings.Join(outcome.Finalizers, ", ") + " are removed"
+		}
+	}
 	if !isManaged {
-		return "Pod deleted successfully", nil
+		return message, nil
 	}
 
 	var cleanupErrs []error
@@ -149,7 +158,7 @@ func (c *Core) PodsDelete(ctx context.Context, namespace, name string) (string, 
 	if len(cleanupErrs) > 0 {
 		return "", &PodCleanupError{Namespace: namespace, Name: name, Errs: cleanupErrs}
 	}
-	return "Pod deleted successfully", nil
+	return message, nil
 }
 
 func (c *Core) PodsLog(ctx context.Context, namespace, name, container string, previous bool, tail int64) (string, error) {

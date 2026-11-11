@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -22,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	metav1beta1 "k8s.io/apimachinery/pkg/apis/meta/v1beta1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
@@ -160,18 +162,86 @@ func ParseManifests(resource string) ([]*unstructured.Unstructured, error) {
 }
 
 func (c *Core) ResourcesDelete(ctx context.Context, gvk *schema.GroupVersionKind, namespace, name string, gracePeriodSeconds *int64) error {
+	_, err := c.ResourcesDeleteWithOptions(ctx, gvk, namespace, name, DeleteOptions{GracePeriodSeconds: gracePeriodSeconds})
+	return err
+}
+
+// DeleteOptions are the options of ResourcesDeleteWithOptions.
+type DeleteOptions struct {
+	GracePeriodSeconds *int64
+	// PropagationPolicy for dependents; empty means Background, as kubectl delete does
+	// (the API's own default for some kinds, such as batch/v1 Job, orphans them).
+	PropagationPolicy metav1.DeletionPropagation
+	// UID and ResourceVersion are optional preconditions: the delete is refused (409)
+	// if the object no longer has that uid (it was deleted and recreated) or that version.
+	UID             string
+	ResourceVersion string
+}
+
+// DeleteOutcome says what a delete left behind, read right after the delete call.
+type DeleteOutcome struct {
+	// Gone is true when the object no longer exists.
+	Gone bool
+	// Pending is set when the object still exists with a deletionTimestamp: finalizers
+	// or a graceful termination are holding it.
+	Pending           bool
+	DeletionTimestamp string
+	Finalizers        []string
+	GracePeriod       *int64
+	// RecreatedUID is set when an object of the same name with another uid exists.
+	RecreatedUID string
+}
+
+// ResourcesDeleteWithOptions deletes one object and reads it again to report whether
+// it is gone or still pending.
+func (c *Core) ResourcesDeleteWithOptions(ctx context.Context, gvk *schema.GroupVersionKind, namespace, name string, opts DeleteOptions) (*DeleteOutcome, error) {
 	gvr, err := c.resourceFor(gvk)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	namespace, err = c.effectiveNamespace(gvk, namespace)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return c.DynamicClient().Resource(*gvr).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{
-		GracePeriodSeconds: gracePeriodSeconds,
-	})
+	policy := opts.PropagationPolicy
+	if policy == "" {
+		policy = metav1.DeletePropagationBackground
+	}
+	deleteOptions := metav1.DeleteOptions{
+		GracePeriodSeconds: opts.GracePeriodSeconds,
+		PropagationPolicy:  &policy,
+	}
+	if opts.UID != "" || opts.ResourceVersion != "" {
+		deleteOptions.Preconditions = &metav1.Preconditions{}
+		if opts.UID != "" {
+			deleteOptions.Preconditions.UID = ptr.To(types.UID(opts.UID))
+		}
+		if opts.ResourceVersion != "" {
+			deleteOptions.Preconditions.ResourceVersion = ptr.To(opts.ResourceVersion)
+		}
+	}
+	client := c.DynamicClient().Resource(*gvr).Namespace(namespace)
+	before, _ := client.Get(ctx, name, metav1.GetOptions{})
+	if err := client.Delete(ctx, name, deleteOptions); err != nil {
+		return nil, err
+	}
+	after, err := client.Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return &DeleteOutcome{Gone: true}, nil
+	}
+	if err != nil {
+		// the delete was accepted; only the read-back failed
+		return &DeleteOutcome{}, nil
+	}
+	if before != nil && after.GetUID() != before.GetUID() {
+		return &DeleteOutcome{Gone: true, RecreatedUID: string(after.GetUID())}, nil
+	}
+	outcome := &DeleteOutcome{Pending: after.GetDeletionTimestamp() != nil, Finalizers: after.GetFinalizers(), GracePeriod: after.GetDeletionGracePeriodSeconds()}
+	if ts := after.GetDeletionTimestamp(); ts != nil {
+		outcome.DeletionTimestamp = ts.UTC().Format(time.RFC3339)
+	}
+	return outcome, nil
 }
 
 func (c *Core) ResourcesScale(

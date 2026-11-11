@@ -1225,6 +1225,23 @@
         "namespace": {
           "description": "Optional Namespace to delete the namespaced resource from (ignored in case of cluster scoped resources). If not provided, will delete resource from configured namespace",
           "type": "string"
+        },
+        "propagationPolicy": {
+          "description": "What happens to dependents (for example a Job's Pods): Background (default, like kubectl delete) deletes them after the object, Foreground before it, Orphan leaves them.",
+          "enum": [
+            "Background",
+            "Foreground",
+            "Orphan"
+          ],
+          "type": "string"
+        },
+        "resourceVersion": {
+          "description": "Optional precondition: the metadata.resourceVersion you read. The delete is refused if the object changed since.",
+          "type": "string"
+        },
+        "uid": {
+          "description": "Optional precondition: the metadata.uid you read. The delete is refused if the object was deleted and recreated under the same name since.",
+          "type": "string"
         }
       },
       "required": [
