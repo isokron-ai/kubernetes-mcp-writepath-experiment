@@ -8,6 +8,7 @@ import (
 	"github.com/containers/kubernetes-mcp-server/pkg/helm"
 	"github.com/containers/kubernetes-mcp-server/pkg/kubernetes"
 	"github.com/google/jsonschema-go/jsonschema"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/utils/ptr"
 
 	"github.com/containers/kubernetes-mcp-server/pkg/api"
@@ -83,6 +84,11 @@ func initHelm() []api.ServerTool {
 						Type:        "integer",
 						Description: "Number of releases to skip. Send the next offset from a full page, with the same limit.",
 						Minimum:     ptr.To(float64(0)),
+					},
+					"states": {
+						Type:        "array",
+						Items:       &jsonschema.Schema{Type: "string", Enum: []any{"all", "deployed", "failed", "pending", "uninstalling", "uninstalled", "superseded", "unknown"}},
+						Description: "Release states to list (default: every state, so a release stuck in uninstalling or pending is visible; Helm 3's CLI shows only deployed and failed by default)",
 					},
 				},
 			},
@@ -215,7 +221,19 @@ func helmList(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 	if err != nil {
 		return api.NewToolCallResult("", err), nil
 	}
-	ret, err := client.List(params.Context, namespace, allNamespaces, limit, offset)
+	states, statesErr := helmStates(params)
+	if statesErr != nil {
+		return api.NewToolCallResult("", fmt.Errorf("failed to list helm releases: %w", statesErr)), nil
+	}
+	ret, err := client.ListStates(params.Context, namespace, allNamespaces, limit, offset, states)
+	if err != nil && allNamespaces && apierrors.IsForbidden(err) {
+		// C23: say that the cluster-wide list is not permitted and show the namespace instead
+		fallback := params.NamespaceOrDefault(namespace)
+		ret, err = client.ListStates(params.Context, fallback, false, limit, offset, states)
+		if err == nil {
+			ret = fmt.Sprintf("# Listing releases in all namespaces is not permitted for this identity (it cannot list Helm's release Secrets cluster-wide); showing namespace %s only\n", fallback) + ret
+		}
+	}
 	if err != nil {
 		if kubernetes.IsResponseTooLarge(err) {
 			err = fmt.Errorf("%w; retry with a smaller limit", err)
@@ -269,4 +287,25 @@ func helmWaitOptions(params api.ToolHandlerParams) (helm.InstallOptions, error) 
 		opts.Timeout = d
 	}
 	return opts, nil
+}
+
+// helmStates reads helm_list's optional states argument.
+func helmStates(params api.ToolHandlerParams) ([]string, error) {
+	raw, ok := params.GetArguments()["states"]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("states must be an array of strings")
+	}
+	states := make([]string, 0, len(list))
+	for _, item := range list {
+		s, ok := item.(string)
+		if !ok {
+			return nil, fmt.Errorf("states must be an array of strings")
+		}
+		states = append(states, s)
+	}
+	return states, nil
 }

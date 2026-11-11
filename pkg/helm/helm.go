@@ -102,11 +102,44 @@ func (h *Helm) InstallWithOptions(ctx context.Context, chart string, values map[
 // List lists releases for the specified namespace, or across namespaces when allNamespaces is set.
 // limit and offset page the releases returned after Helm has loaded them. Zero limit returns every loaded release.
 func (h *Helm) List(ctx context.Context, namespace string, allNamespaces bool, limit, offset int) (string, error) {
+	return h.ListStates(ctx, namespace, allNamespaces, limit, offset, nil)
+}
+
+// listStates maps helm_list's state names to Helm's list filters.
+var listStates = map[string]action.ListStates{
+	"deployed":     action.ListDeployed,
+	"failed":       action.ListFailed,
+	"pending":      action.ListPendingInstall | action.ListPendingUpgrade | action.ListPendingRollback,
+	"uninstalling": action.ListUninstalling,
+	"uninstalled":  action.ListUninstalled,
+	"superseded":   action.ListSuperseded,
+	"unknown":      action.ListUnknown,
+	"all":          action.ListAll,
+}
+
+// ListStateNames are the values helm_list's states argument accepts.
+var ListStateNames = []string{"all", "deployed", "failed", "pending", "uninstalling", "uninstalled", "superseded", "unknown"}
+
+// ListStates lists releases in the given states; no states means every state (Helm 4's
+// default), so that a release stuck in uninstalling or pending-* is visible.
+func (h *Helm) ListStates(ctx context.Context, namespace string, allNamespaces bool, limit, offset int, states []string) (string, error) {
+	mask := action.ListAll
+	if len(states) > 0 {
+		mask = 0
+		for _, state := range states {
+			m, ok := listStates[state]
+			if !ok {
+				return "", fmt.Errorf("unknown release state %q, valid states are: %s", state, strings.Join(ListStateNames, ", "))
+			}
+			mask |= m
+		}
+	}
 	cfg, err := h.newAction(ctx, namespace, allNamespaces)
 	if err != nil {
 		return "", err
 	}
 	list := action.NewList(cfg)
+	list.StateMask = mask
 	list.AllNamespaces = allNamespaces
 	list.Limit = limit
 	list.Offset = offset
@@ -180,7 +213,7 @@ func (h *Helm) UninstallWithOptions(ctx context.Context, name string, namespace 
 	if errors.Is(err, driver.ErrReleaseNotFound) {
 		return fmt.Sprintf("Release %s not found", name), nil
 	} else if err != nil {
-		return "", err
+		return "", h.withReleaseState(ctx, name, h.kubernetes.NamespaceOrDefault(namespace), err)
 	} else if uninstalledRelease == nil {
 		return fmt.Sprintf("Release %s not found", name), nil
 	}

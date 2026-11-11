@@ -119,6 +119,23 @@
           "description": "Number of releases to skip. Send the next offset from a full page, with the same limit.",
           "minimum": 0,
           "type": "integer"
+        },
+        "states": {
+          "description": "Release states to list (default: every state, so a release stuck in uninstalling or pending is visible; Helm 3's CLI shows only deployed and failed by default)",
+          "items": {
+            "enum": [
+              "all",
+              "deployed",
+              "failed",
+              "pending",
+              "uninstalling",
+              "uninstalled",
+              "superseded",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "type": "object"

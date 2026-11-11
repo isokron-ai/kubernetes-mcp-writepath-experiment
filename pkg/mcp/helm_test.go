@@ -16,6 +16,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/suite"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -279,6 +280,69 @@ func (s *HelmSuite) TestHelmList() {
 			})
 		})
 	})
+}
+
+func (s *HelmSuite) TestHelmListStates() {
+	kc := kubernetes.NewForConfigOrDie(test.EnvTestRestConfig())
+	for _, rel := range []struct{ name, status string }{{"release-deployed", "deployed"}, {"release-stuck", "uninstalling"}} {
+		_, err := kc.CoreV1().Secrets("default").Create(s.T().Context(), &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "sh.helm.release.v1." + rel.name + ".v1",
+				Labels: map[string]string{"owner": "helm", "name": rel.name, "status": rel.status},
+			},
+			Data: map[string][]byte{
+				"release": []byte(base64.StdEncoding.EncodeToString([]byte("{\"name\":\"" + rel.name + "\",\"version\":1,\"info\":{\"status\":\"" + rel.status + "\"}}"))),
+			},
+		}, metav1.CreateOptions{})
+		s.Require().NoError(err)
+	}
+	s.InitMcpClient()
+	s.Run("lists every state by default", func() {
+		result, err := s.CallTool("helm_list", map[string]interface{}{})
+		s.Require().NoError(err)
+		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
+		s.Contains(result.Content[0].(*mcp.TextContent).Text, "name: release-stuck")
+		s.Contains(result.Content[0].(*mcp.TextContent).Text, "status: uninstalling")
+	})
+	s.Run("filters by state", func() {
+		result, err := s.CallTool("helm_list", map[string]interface{}{"states": []interface{}{"deployed"}})
+		s.Require().NoError(err)
+		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
+		s.Contains(result.Content[0].(*mcp.TextContent).Text, "name: release-deployed")
+		s.NotContains(result.Content[0].(*mcp.TextContent).Text, "release-stuck")
+	})
+	s.Run("an unknown state is refused", func() {
+		result, err := s.CallTool("helm_list", map[string]interface{}{"states": []interface{}{"broken"}})
+		s.Require().NoError(err)
+		s.True(result.IsError)
+	})
+}
+
+func (s *HelmSuite) TestHelmListAllNamespacesFallsBack() {
+	admin := kubernetes.NewForConfigOrDie(test.EnvTest().Config)
+	_, err := admin.RbacV1().Roles("default").Create(s.T().Context(), &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{Name: "helm-list-default-only"},
+		Rules:      []rbacv1.PolicyRule{{Verbs: []string{"get", "list"}, APIGroups: []string{""}, Resources: []string{"secrets", "configmaps"}}},
+	}, metav1.CreateOptions{})
+	s.Require().NoError(err)
+	_, err = admin.RbacV1().RoleBindings("default").Create(s.T().Context(), &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "helm-list-default-only"},
+		Subjects:   []rbacv1.Subject{{Kind: "Group", Name: "test:users"}},
+		RoleRef:    rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "Role", Name: "helm-list-default-only"},
+	}, metav1.CreateOptions{})
+	s.Require().NoError(err)
+	defer func() {
+		_ = admin.RbacV1().RoleBindings("default").Delete(context.Background(), "helm-list-default-only", metav1.DeleteOptions{})
+		_ = admin.RbacV1().Roles("default").Delete(context.Background(), "helm-list-default-only", metav1.DeleteOptions{})
+	}()
+	s.InitMcpClient()
+	defer restoreAuth(s.T().Context())
+	revokeAllowAll(s.T())
+	result, err := s.CallTool("helm_list", map[string]interface{}{"all_namespaces": true})
+	s.Require().NoError(err)
+	s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
+	s.Contains(result.Content[0].(*mcp.TextContent).Text, "Listing releases in all namespaces is not permitted for this identity")
+	s.Contains(result.Content[0].(*mcp.TextContent).Text, "showing namespace default only")
 }
 
 func (s *HelmSuite) TestHelmListDenied() {
