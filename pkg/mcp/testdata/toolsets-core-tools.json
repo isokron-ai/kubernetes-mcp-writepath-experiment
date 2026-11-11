@@ -1061,6 +1061,20 @@
               "namespace": {
                 "argument": "namespace"
               },
+              "target": {
+                "gvk": {
+                  "apiVersionArgument": "apiVersion",
+                  "kindArgument": "kind"
+                }
+              },
+              "verbs": [
+                "list"
+              ]
+            },
+            {
+              "namespace": {
+                "argument": "namespace"
+              },
               "resourceName": {
                 "argument": "name"
               },
@@ -1093,12 +1107,21 @@
           "description": "apiVersion of the resource (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)",
           "type": "string"
         },
+        "dry_run": {
+          "description": "With labelSelector: list the objects that would be affected and change nothing.",
+          "type": "boolean"
+        },
         "gracePeriodSeconds": {
           "description": "Optional duration in seconds before the object should be deleted. Value must be non-negative integer. The value zero indicates delete immediately. If this value is nil, the default grace period for the specified type will be used",
           "type": "integer"
         },
         "kind": {
           "description": "kind of the resource (examples of valid kind are: Pod, Service, Deployment, Ingress)",
+          "type": "string"
+        },
+        "labelSelector": {
+          "description": "Instead of name: act on every object of this kind in the namespace whose labels match (e.g. 'cache=stale'). Must not be empty. Each object is handled on its own (best effort) and gets its own result line.",
+          "pattern": "^([/_.\\-A-Za-z0-9=, ()!])+$",
           "type": "string"
         },
         "name": {
@@ -1129,8 +1152,7 @@
       },
       "required": [
         "apiVersion",
-        "kind",
-        "name"
+        "kind"
       ],
       "type": "object"
     },
@@ -1200,6 +1222,87 @@
     },
     "name": "resources_get",
     "title": "Resources: Get"
+  },
+  {
+    "_meta": {
+      "io.kubernetes-mcp-server/rbac": {
+        "bounded": {
+          "requirements": [
+            {
+              "namespace": {
+                "argument": "namespace"
+              },
+              "target": {
+                "gvk": {
+                  "apiVersionArgument": "apiVersion",
+                  "kindArgument": "kind"
+                }
+              },
+              "verbs": [
+                "list",
+                "patch"
+              ]
+            }
+          ]
+        },
+        "version": "v1alpha1"
+      }
+    },
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": false,
+      "title": "Resources: Label"
+    },
+    "description": "Add, change or remove labels on one object (name) or on every object of a kind that matches a label selector, without sending the objects. Other labels are left alone. With labelSelector each object is handled on its own (best effort) and gets its own result line.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
+    "inputSchema": {
+      "properties": {
+        "apiVersion": {
+          "description": "apiVersion of the resources (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)",
+          "type": "string"
+        },
+        "dry_run": {
+          "description": "With labelSelector: list the objects that would be labelled and change nothing.",
+          "type": "boolean"
+        },
+        "kind": {
+          "description": "kind of the resources (examples of valid kind are: Pod, Service, Deployment, ConfigMap)",
+          "type": "string"
+        },
+        "labelSelector": {
+          "description": "Instead of name: label every object of this kind in the namespace whose labels match (e.g. 'app=web'). Must not be empty.",
+          "pattern": "^([/_.\\-A-Za-z0-9=, ()!])+$",
+          "type": "string"
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": "Labels to set, as key: value; a null value removes the label (e.g. {\"tier\": \"cache\", \"stale\": null})",
+          "type": "object"
+        },
+        "name": {
+          "description": "Name of one object to label (or use labelSelector)",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "Optional Namespace (ignored for cluster scoped resources). If not provided, the configured namespace is used",
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "labels"
+      ],
+      "type": "object"
+    },
+    "name": "resources_label",
+    "title": "Resources: Label"
   },
   {
     "_meta": {
@@ -1376,6 +1479,20 @@
               "namespace": {
                 "argument": "namespace"
               },
+              "target": {
+                "gvk": {
+                  "apiVersionArgument": "apiVersion",
+                  "kindArgument": "kind"
+                }
+              },
+              "verbs": [
+                "list"
+              ]
+            },
+            {
+              "namespace": {
+                "argument": "namespace"
+              },
               "resourceName": {
                 "argument": "name"
               },
@@ -1410,8 +1527,17 @@
           "description": "apiVersion of the resource (examples of valid apiVersion are apps/v1)",
           "type": "string"
         },
+        "dry_run": {
+          "description": "With labelSelector: list the objects that would be affected and change nothing.",
+          "type": "boolean"
+        },
         "kind": {
           "description": "kind of the resource (examples of valid kind are: StatefulSet, Deployment)",
+          "type": "string"
+        },
+        "labelSelector": {
+          "description": "Instead of name: act on every object of this kind in the namespace whose labels match (e.g. 'cache=stale'). Must not be empty. Each object is handled on its own (best effort) and gets its own result line.",
+          "pattern": "^([/_.\\-A-Za-z0-9=, ()!])+$",
           "type": "string"
         },
         "name": {
@@ -1437,8 +1563,7 @@
       },
       "required": [
         "apiVersion",
-        "kind",
-        "name"
+        "kind"
       ],
       "type": "object"
     },

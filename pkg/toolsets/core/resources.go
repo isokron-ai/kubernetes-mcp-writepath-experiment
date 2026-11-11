@@ -208,6 +208,46 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
 			ResourceName: &api.RBACResourceName{Argument: "name"},
 		}), Handler: resourcesPatch},
 		{Tool: api.Tool{
+			Name: "resources_label",
+			Description: "Add, change or remove labels on one object (name) or on every object of a kind that matches a label selector, without sending the objects. " +
+				"Other labels are left alone. With labelSelector each object is handled on its own (best effort) and gets its own result line.\n" + commonApiVersion,
+			InputSchema: &jsonschema.Schema{
+				Type: "object",
+				Properties: map[string]*jsonschema.Schema{
+					"apiVersion": {Type: "string", Description: "apiVersion of the resources (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)"},
+					"kind":       {Type: "string", Description: "kind of the resources (examples of valid kind are: Pod, Service, Deployment, ConfigMap)"},
+					"namespace":  {Type: "string", Description: "Optional Namespace (ignored for cluster scoped resources). If not provided, the configured namespace is used"},
+					"name":       {Type: "string", Description: "Name of one object to label (or use labelSelector)"},
+					"labelSelector": {
+						Type:        "string",
+						Description: "Instead of name: label every object of this kind in the namespace whose labels match (e.g. 'app=web'). Must not be empty.",
+						Pattern:     REGEX_LABELSELECTOR_VALID_CHARS,
+					},
+					"labels": {
+						Type:                 "object",
+						Description:          "Labels to set, as key: value; a null value removes the label (e.g. {\"tier\": \"cache\", \"stale\": null})",
+						AdditionalProperties: &jsonschema.Schema{Types: []string{"string", "null"}},
+					},
+					"dry_run": {Type: "boolean", Description: "With labelSelector: list the objects that would be labelled and change nothing."},
+				},
+				Required: []string{"apiVersion", "kind", "labels"},
+			},
+			Annotations: api.ToolAnnotations{
+				Title: "Resources: Label",
+				// changing or removing labels can move objects out of selectors (Services, ReplicaSets)
+				DestructiveHint: ptr.To(true),
+				IdempotentHint:  ptr.To(true),
+				OpenWorldHint:   ptr.To(true),
+			},
+		}, RBAC: api.RBACBounded(api.RBACRequirement{
+			Verbs: []string{"list", "patch"},
+			Target: api.RBACTarget{GVK: &api.RBACGVKTarget{
+				APIVersionArgument: "apiVersion",
+				KindArgument:       "kind",
+			}},
+			Namespace: &api.RBACNamespace{Argument: "namespace"},
+		}), Handler: resourcesLabel},
+		{Tool: api.Tool{
 			Name:        "resources_delete",
 			Description: "Delete a Kubernetes resource in the current cluster by providing its apiVersion, kind, optionally the namespace, and its name\n" + commonApiVersion,
 			InputSchema: &jsonschema.Schema{
@@ -246,8 +286,17 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
 						Type:        "string",
 						Description: "Optional precondition: the metadata.resourceVersion you read. The delete is refused if the object changed since.",
 					},
+					"labelSelector": {
+						Type:        "string",
+						Description: "Instead of name: act on every object of this kind in the namespace whose labels match (e.g. 'cache=stale'). Must not be empty. Each object is handled on its own (best effort) and gets its own result line.",
+						Pattern:     REGEX_LABELSELECTOR_VALID_CHARS,
+					},
+					"dry_run": {
+						Type:        "boolean",
+						Description: "With labelSelector: list the objects that would be affected and change nothing.",
+					},
 				},
-				Required: []string{"apiVersion", "kind", "name"},
+				Required: []string{"apiVersion", "kind"},
 			},
 			Annotations: api.ToolAnnotations{
 				Title:           "Resources: Delete",
@@ -256,6 +305,13 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
 				OpenWorldHint:   ptr.To(true),
 			},
 		}, RBAC: api.RBACBounded(api.RBACRequirement{
+			Verbs: []string{"list"},
+			Target: api.RBACTarget{GVK: &api.RBACGVKTarget{
+				APIVersionArgument: "apiVersion",
+				KindArgument:       "kind",
+			}},
+			Namespace: &api.RBACNamespace{Argument: "namespace"},
+		}, api.RBACRequirement{
 			Verbs: []string{"delete"},
 			Target: api.RBACTarget{GVK: &api.RBACGVKTarget{
 				APIVersionArgument: "apiVersion",
@@ -291,8 +347,17 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
 						Description: "Optional scale to update the resources scale to. If not provided, will return the current scale of the resource, and not update it",
 					},
 					"output": outputProperty,
+					"labelSelector": {
+						Type:        "string",
+						Description: "Instead of name: act on every object of this kind in the namespace whose labels match (e.g. 'cache=stale'). Must not be empty. Each object is handled on its own (best effort) and gets its own result line.",
+						Pattern:     REGEX_LABELSELECTOR_VALID_CHARS,
+					},
+					"dry_run": {
+						Type:        "boolean",
+						Description: "With labelSelector: list the objects that would be affected and change nothing.",
+					},
 				},
-				Required: []string{"apiVersion", "kind", "name"},
+				Required: []string{"apiVersion", "kind"},
 			},
 			Annotations: api.ToolAnnotations{
 				Title:           "Resources: Scale",
@@ -301,6 +366,13 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
 				OpenWorldHint:   ptr.To(true),
 			},
 		}, RBAC: api.RBACBounded(api.RBACRequirement{
+			Verbs: []string{"list"},
+			Target: api.RBACTarget{GVK: &api.RBACGVKTarget{
+				APIVersionArgument: "apiVersion",
+				KindArgument:       "kind",
+			}},
+			Namespace: &api.RBACNamespace{Argument: "namespace"},
+		}, api.RBACRequirement{
 			Verbs: []string{"get", "update"},
 			Target: api.RBACTarget{GVK: &api.RBACGVKTarget{
 				APIVersionArgument: "apiVersion",
@@ -586,8 +658,21 @@ func resourcesDelete(params api.ToolHandlerParams) (*api.ToolCallResult, error) 
 		return api.NewToolCallResult("", fmt.Errorf("failed to delete resource, %s", err)), nil
 	}
 	name := params.GetArguments()["name"]
+	if selector, ok := params.GetArguments()["labelSelector"].(string); ok && name == nil {
+		ns, _ := namespace.(string)
+		p := api.WrapParams(params)
+		opts := kubernetes.DeleteOptions{PropagationPolicy: metav1.DeletionPropagation(p.OptionalString("propagationPolicy", string(metav1.DeletePropagationBackground)))}
+		dryRun := p.OptionalBool("dry_run", false)
+		if err := p.Err(); err != nil {
+			return api.NewToolCallResult("", fmt.Errorf("failed to delete resources: %w", err)), nil
+		}
+		return resourcesDeleteBySelector(params, gvk, ns, selector, opts, dryRun)
+	}
 	if name == nil {
 		return api.NewToolCallResult("", errors.New("failed to delete resource, missing argument name")), nil
+	}
+	if _, ok := params.GetArguments()["labelSelector"]; ok {
+		return api.NewToolCallResult("", errors.New("failed to delete resource, pass either name or labelSelector, not both")), nil
 	}
 
 	ns, ok := namespace.(string)
@@ -670,8 +755,28 @@ func resourcesScale(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 	}
 
 	name := params.GetArguments()["name"]
+	if selector, ok := params.GetArguments()["labelSelector"].(string); ok && name == nil {
+		ns, _ := namespace.(string)
+		scaleVal, hasScale := params.GetArguments()["scale"]
+		if !hasScale {
+			return api.NewToolCallResult("", errors.New("failed to scale resources: scale is required with labelSelector")), nil
+		}
+		desired, err := parseScaleValue(scaleVal)
+		if err != nil {
+			return api.NewToolCallResult("", err), nil
+		}
+		p := api.WrapParams(params)
+		dryRun := p.OptionalBool("dry_run", false)
+		if err := p.Err(); err != nil {
+			return api.NewToolCallResult("", fmt.Errorf("failed to scale resources: %w", err)), nil
+		}
+		return resourcesScaleBySelector(params, gvk, ns, selector, desired, dryRun)
+	}
 	if name == nil {
 		return api.NewToolCallResult("", errors.New("failed to get/update resource scale, missing argument name")), nil
+	}
+	if _, ok := params.GetArguments()["labelSelector"]; ok {
+		return api.NewToolCallResult("", errors.New("failed to get/update resource scale, pass either name or labelSelector, not both")), nil
 	}
 
 	ns, ok := namespace.(string)
