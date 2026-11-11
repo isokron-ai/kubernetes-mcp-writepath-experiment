@@ -156,8 +156,11 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
 		}), Handler: resourcesGet,
 			App: mcpapps.Resource("ui://kubernetes-mcp-server/resources-get", "Resource details", mcpapps.WithDescription("Interactive Kubernetes resource details"))},
 		{Tool: api.Tool{
-			Name:        "resources_create_or_update",
-			Description: "Create or update a Kubernetes resource via Server-Side Apply. The manifest is the complete desired state: any field this tool previously set and the new manifest omits is removed. To edit an existing resource, fetch it with resources_get, modify it, then re-apply the full resource.\n" + commonApiVersion,
+			Name: "resources_create_or_update",
+			Description: "Create or update Kubernetes resources via Server-Side Apply (one manifest, or several separated by ---). Send only the fields you mean to set: fields you leave out keep their values and owners, " +
+				"and a field another writer owns makes the apply fail with that writer named, so a concurrent change is not reverted (force: true takes such fields over). " +
+				"The apply is an upsert: mode: create only creates and never changes an existing object. A metadata.resourceVersion in the manifest is a precondition: the write fails if the object changed since. " +
+				"For one-field edits, or to remove a field another writer set, use resources_patch. Namespaced objects without metadata.namespace go to the configured namespace.\n" + commonApiVersion,
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
 				Properties: map[string]*jsonschema.Schema{

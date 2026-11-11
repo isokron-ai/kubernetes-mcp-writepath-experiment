@@ -24,7 +24,7 @@ func initHelm() []api.ServerTool {
 				Properties: map[string]*jsonschema.Schema{
 					"chart": {
 						Type:        "string",
-						Description: "Chart reference to install (for example: stable/grafana, oci://ghcr.io/nginxinc/charts/nginx-ingress)",
+						Description: "Chart reference to install: a repository chart (stable/grafana), an OCI or HTTPS URL (oci://ghcr.io/nginxinc/charts/nginx-ingress), or a path to a chart directory or .tgz file on the server's host (unless allowed_registries is configured)",
 					},
 					"values": {
 						Type:        "object",

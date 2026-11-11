@@ -107,11 +107,22 @@ type ServerInstructionsSuite struct {
 	BaseMcpSuite
 }
 
-func (s *ServerInstructionsSuite) TestServerInstructionsEmpty() {
+func (s *ServerInstructionsSuite) TestServerInstructionsDefault() {
 	s.InitMcpClient()
-	s.Run("returns empty instructions when not configured", func() {
+	s.Run("returns the default notes on the core tools when not configured", func() {
 		s.Require().NotNil(s.InitializeResult)
-		s.Empty(s.InitializeResult.Instructions, "instructions should be empty when not configured")
+		s.Equal(DefaultCoreInstructions, s.InitializeResult.Instructions)
+	})
+}
+
+func (s *ServerInstructionsSuite) TestServerInstructionsEmptyWithoutCore() {
+	configtest.OverlayTOML(s.T(), &s.Cfg, `
+		toolsets = [ "config" ]
+	`)
+	s.InitMcpClient()
+	s.Run("returns empty instructions when not configured and core is not enabled", func() {
+		s.Require().NotNil(s.InitializeResult)
+		s.Empty(s.InitializeResult.Instructions)
 	})
 }
 

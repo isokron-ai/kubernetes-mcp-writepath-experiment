@@ -172,7 +172,7 @@ func NewServer(ctx context.Context, configuration Configuration, targetProvider 
 			},
 			&mcp.ServerOptions{
 				Capabilities: capabilities,
-				Instructions: configuration.ServerInstructions.Get(),
+				Instructions: serverInstructions(&configuration),
 				Logger:       sdkLogger,
 			}),
 		p:             targetProvider,
@@ -525,6 +525,28 @@ func (s *Server) validateToolNames(ctx context.Context, cfg *Configuration) erro
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// DefaultCoreInstructions are sent to clients when server_instructions is not configured
+// and the core toolset is enabled: the few facts about the write tools that agents
+// otherwise learn by losing an update or misreading a result.
+const DefaultCoreInstructions = `Notes on the Kubernetes tools:
+- resources_create_or_update is a server-side apply and does not take over fields by default. Send only the fields you mean to set; fields you leave out keep their values. A field another writer owns is refused with its manager named (force: true takes it over). mode: create never overwrites an existing object.
+- For one-field edits, and to remove labels, annotations, finalizers or keys someone else set, use resources_patch; pass the resourceVersion you read to make it fail if the object changed since.
+- Namespaced objects without metadata.namespace go to the configured namespace.
+- Write results are receipts; pass output: full for whole objects. Deletes report pending when finalizers or termination still hold the object; pass wait to wait for a result.
+- auth_can_i says whether an action is permitted. An empty list says so.`
+
+// serverInstructions returns the configured server_instructions, or the default notes
+// when none are configured and the core toolset is enabled.
+func serverInstructions(cfg *Configuration) string {
+	if instructions := cfg.ServerInstructions.Get(); instructions != "" {
+		return instructions
+	}
+	if cfg.Config != nil && slices.Contains(cfg.Config.Toolsets.Get(), "core") {
+		return DefaultCoreInstructions
+	}
+	return ""
 }
 
 func (s *Server) toolsetContext(cfg *Configuration) api.ToolsetContext {
