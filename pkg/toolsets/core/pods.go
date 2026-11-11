@@ -35,6 +35,7 @@ func initPods(inspector api.ClusterInspector) []api.ServerTool {
 						Description: "Optional Kubernetes field selector to filter pods by field values (e.g. 'status.phase=Running', 'spec.nodeName=node1'). Supported fields: metadata.name, metadata.namespace, spec.nodeName, spec.restartPolicy, spec.schedulerName, spec.serviceAccountName, status.phase (Pending/Running/Succeeded/Failed/Unknown), status.podIP, status.nominatedNodeName. Note: CrashLoopBackOff is a container state, not a pod phase, so it cannot be filtered directly. See https://kubernetes.io/docs/concepts/overview/working-with-objects/field-selectors/",
 						Pattern:     REGEX_FIELDSELECTOR,
 					},
+					"wide": wideProperty,
 				}),
 			},
 			Annotations: api.ToolAnnotations{
@@ -69,6 +70,7 @@ func initPods(inspector api.ClusterInspector) []api.ServerTool {
 						Description: "Optional Kubernetes field selector to filter pods by field values (e.g. 'status.phase=Running', 'spec.nodeName=node1'). Supported fields: metadata.name, metadata.namespace, spec.nodeName, spec.restartPolicy, spec.schedulerName, spec.serviceAccountName, status.phase (Pending/Running/Succeeded/Failed/Unknown), status.podIP, status.nominatedNodeName. Note: CrashLoopBackOff is a container state, not a pod phase, so it cannot be filtered directly. See https://kubernetes.io/docs/concepts/overview/working-with-objects/field-selectors/",
 						Pattern:     REGEX_FIELDSELECTOR,
 					},
+					"wide": wideProperty,
 				}),
 				Required: []string{"namespace"},
 			},
@@ -380,11 +382,19 @@ func podsListInAllNamespaces(params api.ToolHandlerParams) (*api.ToolCallResult,
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to list pods in all namespaces: %w", ListErr(err))), nil
 	}
+	if listLength(ret) == 0 && !params.Config.AppsEnabled.Get() {
+		text, structured := WithListPage(emptyListText("Pod", "", resourceListOptions.LabelSelector, resourceListOptions.FieldSelector), nil, ret)
+		return api.NewToolCallResultFull(text, structured, nil), nil
+	}
 	printed, err := params.ListOutput.PrintObjStructured(ret)
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to render pods: %w", err)), nil
 	}
-	text, structured := WithListPage(printed.Text, tableAppStructured(ret, printed.Structured), ret)
+	structuredRows := tableAppStructured(ret, printed.Structured)
+	if !params.Config.AppsEnabled.Get() && params.ListOutput.AsTable() {
+		structuredRows = trimTableRows(ret, structuredRows, false, p.OptionalBool("wide", false)).(map[string]any)
+	}
+	text, structured := WithListPage(printed.Text, structuredRows, ret)
 	return api.NewToolCallResultFull(text, structured, nil), nil
 }
 
@@ -403,11 +413,19 @@ func podsListInNamespace(params api.ToolHandlerParams) (*api.ToolCallResult, err
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to list pods in namespace %s: %w", ns, ListErr(err))), nil
 	}
+	if listLength(ret) == 0 && !params.Config.AppsEnabled.Get() {
+		text, structured := WithListPage(emptyListText("Pod", ns, resourceListOptions.LabelSelector, resourceListOptions.FieldSelector), nil, ret)
+		return api.NewToolCallResultFull(text, structured, nil), nil
+	}
 	printed, err := params.ListOutput.PrintObjStructured(ret)
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to render pods: %w", err)), nil
 	}
-	text, structured := WithListPage(printed.Text, tableAppStructured(ret, printed.Structured), ret)
+	structuredRows := tableAppStructured(ret, printed.Structured)
+	if !params.Config.AppsEnabled.Get() && params.ListOutput.AsTable() {
+		structuredRows = trimTableRows(ret, structuredRows, true, p.OptionalBool("wide", false)).(map[string]any)
+	}
+	text, structured := WithListPage(printed.Text, structuredRows, ret)
 	return api.NewToolCallResultFull(text, structured, nil), nil
 }
 

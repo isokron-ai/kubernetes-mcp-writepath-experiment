@@ -85,6 +85,7 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
 						Items:       &jsonschema.Schema{Type: "string"},
 						Description: "Return only these fields of each object, as dotted paths; [N] picks a list element and [*] every element, e.g. [\"spec.replicas\", \"spec.template.spec.containers[*].image\"].",
 					},
+					"wide": wideProperty,
 				}),
 				Required: []string{"apiVersion", "kind"},
 			},
@@ -557,9 +558,17 @@ func resourcesList(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to list resources: %w", ListErr(err))), nil
 	}
+	if listLength(ret) == 0 && !params.Config.AppsEnabled.Get() {
+		text, structured := WithListPage(emptyListText(gvk.Kind, ns, resourceListOptions.LabelSelector, resourceListOptions.FieldSelector), nil, ret)
+		return api.NewToolCallResultFull(text, structured, nil), nil
+	}
 	printed, err := params.ListOutput.PrintObjStructured(ret)
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to format resources: %w", err)), nil
+	}
+	if !params.Config.AppsEnabled.Get() && params.ListOutput.AsTable() {
+		wide, _ := params.GetArguments()["wide"].(bool)
+		printed.Structured = trimTableRows(ret, printed.Structured, ns != "", wide)
 	}
 	// Empty Table responses have no structured output from the printer. Supply
 	// an explicit empty list for Apps without altering nonempty or non-Apps results.

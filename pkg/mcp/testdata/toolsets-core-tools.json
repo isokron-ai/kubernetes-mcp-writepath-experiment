@@ -607,6 +607,10 @@
           "description": "Maximum number of items to return. Omit or set to 0 to list everything, which fails if the response exceeds max_backend_response_bytes. Retry with a smaller limit when that happens. The API may return fewer items than requested.",
           "minimum": 0,
           "type": "integer"
+        },
+        "wide": {
+          "description": "Include the columns kubectl shows only with -o wide (for Pods: IP, Node, Nominated Node, Readiness Gates; for Deployments: Containers, Images, Selector) in the structured rows. Default false.",
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -669,6 +673,10 @@
         "namespace": {
           "description": "Namespace to list pods from",
           "type": "string"
+        },
+        "wide": {
+          "description": "Include the columns kubectl shows only with -o wide (for Pods: IP, Node, Nominated Node, Readiness Gates; for Deployments: Containers, Images, Selector) in the structured rows. Default false.",
+          "type": "boolean"
         }
       },
       "required": [
@@ -1407,6 +1415,10 @@
         "namespace": {
           "description": "Optional Namespace to retrieve the namespaced resources from (ignored in case of cluster scoped resources). If not provided, will list resources from all namespaces",
           "type": "string"
+        },
+        "wide": {
+          "description": "Include the columns kubectl shows only with -o wide (for Pods: IP, Node, Nominated Node, Readiness Gates; for Deployments: Containers, Images, Selector) in the structured rows. Default false.",
+          "type": "boolean"
         }
       },
       "required": [
