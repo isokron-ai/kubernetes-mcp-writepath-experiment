@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/kubectl/pkg/metricsutil"
 	"k8s.io/utils/ptr"
@@ -335,6 +336,25 @@ func initPods(inspector api.ClusterInspector) []api.ServerTool {
 						Description: "TCP/IP port to expose from the Pod container, 1-65535 (Optional, no port exposed if not provided)",
 					},
 					"output": outputProperty,
+					"command": {
+						Type:        "array",
+						Items:       &jsonschema.Schema{Type: "string"},
+						Description: "Optional entrypoint, replacing the image's (e.g. [\"sh\", \"-c\", \"sleep 3600\"])",
+					},
+					"args": {
+						Type:        "array",
+						Items:       &jsonschema.Schema{Type: "string"},
+						Description: "Optional arguments to the entrypoint",
+					},
+					"restartPolicy": {
+						Type:        "string",
+						Enum:        []any{"Always", "OnFailure", "Never"},
+						Description: "Optional restart policy (default Always); use Never for a one-off command",
+					},
+					"replace": {
+						Type:        "boolean",
+						Description: "Re-apply over a Pod (and Service, Route) that an earlier pods_run created with this name. Default false: an existing object of that name is never changed.",
+					},
 				},
 				Required: []string{"image"},
 			},
@@ -622,7 +642,29 @@ func podsRun(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to run pod: %w", err)), nil
 	}
-	resources, err := kubernetes.NewCore(params).PodsRun(params, ns, name, image, port)
+	command, err := stringList(params.GetArguments(), "command")
+	if err != nil {
+		return api.NewToolCallResult("", fmt.Errorf("failed to run pod: %w", err)), nil
+	}
+	args, err := stringList(params.GetArguments(), "args")
+	if err != nil {
+		return api.NewToolCallResult("", fmt.Errorf("failed to run pod: %w", err)), nil
+	}
+	opts := kubernetes.PodsRunOptions{
+		Command:       command,
+		Args:          args,
+		RestartPolicy: v1.RestartPolicy(p.OptionalString("restartPolicy", "")),
+		Replace:       p.OptionalBool("replace", false),
+	}
+	if err := p.Err(); err != nil {
+		return api.NewToolCallResult("", fmt.Errorf("failed to run pod: %w", err)), nil
+	}
+	switch opts.RestartPolicy {
+	case "", v1.RestartPolicyAlways, v1.RestartPolicyOnFailure, v1.RestartPolicyNever:
+	default:
+		return api.NewToolCallResult("", fmt.Errorf("failed to run pod: restartPolicy must be Always, OnFailure or Never, got %q", opts.RestartPolicy)), nil
+	}
+	resources, err := kubernetes.NewCore(params).PodsRunWithOptions(params, ns, name, image, port, opts)
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to run pod %s in namespace %s: %w", name, ns, err)), nil
 	}

@@ -908,6 +908,20 @@
     "description": "Run a Kubernetes Pod in the current or provided namespace with the provided container image and optional name",
     "inputSchema": {
       "properties": {
+        "args": {
+          "description": "Optional arguments to the entrypoint",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "command": {
+          "description": "Optional entrypoint, replacing the image's (e.g. [\"sh\", \"-c\", \"sleep 3600\"])",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "image": {
           "description": "Container Image to run in the Pod",
           "type": "string"
@@ -931,6 +945,19 @@
         "port": {
           "description": "TCP/IP port to expose from the Pod container, 1-65535 (Optional, no port exposed if not provided)",
           "type": "number"
+        },
+        "replace": {
+          "description": "Re-apply over a Pod (and Service, Route) that an earlier pods_run created with this name. Default false: an existing object of that name is never changed.",
+          "type": "boolean"
+        },
+        "restartPolicy": {
+          "description": "Optional restart policy (default Always); use Never for a one-off command",
+          "enum": [
+            "Always",
+            "OnFailure",
+            "Never"
+          ],
+          "type": "string"
         }
       },
       "required": [

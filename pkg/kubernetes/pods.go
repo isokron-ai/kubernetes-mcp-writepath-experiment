@@ -217,6 +217,22 @@ func (c *Core) PodsLogLimited(ctx context.Context, namespace, name, container st
 }
 
 func (c *Core) PodsRun(ctx context.Context, namespace, name, image string, port int32) ([]*unstructured.Unstructured, error) {
+	return c.PodsRunWithOptions(ctx, namespace, name, image, port, PodsRunOptions{Replace: true})
+}
+
+// PodsRunOptions are pods_run's container and re-run options.
+type PodsRunOptions struct {
+	Command       []string
+	Args          []string
+	RestartPolicy v1.RestartPolicy
+	// Replace re-applies over a Pod, Service and Route that an earlier pods_run call
+	// created under the same name. Without it such a re-run fails instead.
+	Replace bool
+}
+
+// PodsRunWithOptions runs a Pod (and, with a port, a Service and Route) with a command,
+// arguments and restart policy.
+func (c *Core) PodsRunWithOptions(ctx context.Context, namespace, name, image string, port int32, opts PodsRunOptions) ([]*unstructured.Unstructured, error) {
 	if name == "" {
 		name = version.BinaryName + "-run-" + rand.String(5)
 	}
@@ -231,10 +247,12 @@ func (c *Core) PodsRun(ctx context.Context, namespace, name, image string, port 
 	pod := &v1.Pod{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Pod"},
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: c.NamespaceOrDefault(namespace), Labels: labels},
-		Spec: v1.PodSpec{Containers: []v1.Container{{
+		Spec: v1.PodSpec{RestartPolicy: opts.RestartPolicy, Containers: []v1.Container{{
 			Name:            name,
 			Image:           image,
 			ImagePullPolicy: v1.PullAlways,
+			Command:         opts.Command,
+			Args:            opts.Args,
 		}}},
 	}
 	resources = append(resources, pod)
@@ -312,6 +330,9 @@ func (c *Core) PodsRun(ctx context.Context, namespace, name, image string, port 
 		}
 		if existing.GetLabels()[AppKubernetesManagedBy] != version.BinaryName || existing.GetLabels()[AppKubernetesName] != name {
 			return nil, fmt.Errorf("%s %s/%s already exists and was not created by pods_run; nothing was created or changed: choose another name", gvk.Kind, u.GetNamespace(), u.GetName())
+		}
+		if !opts.Replace {
+			return nil, fmt.Errorf("%s %s/%s already exists (created by an earlier pods_run); nothing was changed: choose another name, delete it first, or pass replace: true to re-apply over it (immutable Pod fields such as the command still need a delete)", gvk.Kind, u.GetNamespace(), u.GetName())
 		}
 	}
 	return c.resourcesCreateOrUpdate(ctx, toCreate)

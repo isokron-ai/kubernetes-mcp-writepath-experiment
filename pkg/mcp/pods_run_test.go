@@ -132,13 +132,36 @@ func (s *PodsRunSuite) TestPodsRunDoesNotTakeOverExistingService() {
 	})
 }
 
-func (s *PodsRunSuite) TestPodsRunRerunKeepsWorking() {
+func (s *PodsRunSuite) TestPodsRunRerun() {
 	s.InitMcpClient()
-	for i := 0; i < 2; i++ {
-		toolResult, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "name": "rerun-pod", "port": 80})
+	first, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "name": "rerun-pod", "port": 80})
+	s.Require().NoError(err)
+	s.Require().Falsef(first.IsError, "call tool failed: %v", first.Content)
+	s.Run("a re-run without replace changes nothing and says why", func() {
+		again, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx:2", "name": "rerun-pod", "port": 80})
 		s.Require().NoError(err)
-		s.Falsef(toolResult.IsError, "call %d failed: %v", i+1, toolResult.Content)
-	}
+		s.True(again.IsError)
+		s.Contains(again.Content[0].(*mcp.TextContent).Text, "Pod default/rerun-pod already exists (created by an earlier pods_run)")
+	})
+	s.Run("a re-run with replace re-applies", func() {
+		again, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "name": "rerun-pod", "port": 80, "replace": true})
+		s.Require().NoError(err)
+		s.Falsef(again.IsError, "call tool failed: %v", again.Content)
+	})
+}
+
+func (s *PodsRunSuite) TestPodsRunWithCommand() {
+	s.InitMcpClient()
+	result, err := s.CallTool("pods_run", map[string]interface{}{
+		"image": "busybox", "name": "one-off", "command": []interface{}{"sh", "-c"}, "args": []interface{}{"echo hi"}, "restartPolicy": "Never",
+	})
+	s.Require().NoError(err)
+	s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
+	pod, err := kubernetes.NewForConfigOrDie(test.EnvTestRestConfig()).CoreV1().Pods("default").Get(s.T().Context(), "one-off", metav1.GetOptions{})
+	s.Require().NoError(err)
+	s.Equal([]string{"sh", "-c"}, pod.Spec.Containers[0].Command)
+	s.Equal([]string{"echo hi"}, pod.Spec.Containers[0].Args)
+	s.Equal(corev1.RestartPolicyNever, pod.Spec.RestartPolicy)
 }
 
 func (s *PodsRunSuite) TestPodsRunIsAnnotatedDestructive() {
