@@ -11,7 +11,9 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/containers/kubernetes-mcp-server/internal/test"
+	"github.com/containers/kubernetes-mcp-server/pkg/config"
 	"github.com/containers/kubernetes-mcp-server/pkg/config/configtest"
+	internalk8s "github.com/containers/kubernetes-mcp-server/pkg/kubernetes"
 )
 
 // McpToolProcessingSuite tests MCP tool processing (isToolApplicable)
@@ -150,6 +152,39 @@ func (s *McpToolProcessingSuite) TestEnabledTools() {
 				"Tool %s is not enabled but should be", tool.Name)
 		}
 	})
+}
+
+func (s *McpToolProcessingSuite) TestUnknownToolNamesFailAtStart() {
+	for _, tc := range []struct{ option, toml string }{
+		{"enabled_tools", `enabled_tools = [ "resources_gett" ]`},
+		{"disabled_tools", `disabled_tools = [ "pods_deleet" ]`},
+	} {
+		s.Run(tc.option+" with a misspelt tool name", func() {
+			cfg := config.BaseDefault()
+			cfg.KubeConfig.SetForTest(s.Cfg.KubeConfig.Get())
+			configtest.OverlayTOML(s.T(), &cfg, tc.toml)
+			provider, err := internalk8s.NewProvider(s.T().Context(), cfg)
+			s.Require().NoError(err)
+			defer provider.Close()
+			server, err := NewServer(s.T().Context(), Configuration{Config: cfg}, provider)
+			if server != nil {
+				defer server.Close()
+			}
+			s.Require().Error(err, "the server must not start with an unknown tool name")
+			s.Contains(err.Error(), tc.option+" names tools that no toolset provides")
+		})
+	}
+}
+
+func (s *McpToolProcessingSuite) TestToolOfAToolsetNotEnabledIsAValidName() {
+	configtest.OverlayTOML(s.T(), &s.Cfg, `
+		toolsets = [ "core" ]
+		disabled_tools = [ "helm_install" ]
+	`)
+	s.InitMcpClient()
+	tools, err := s.ListTools()
+	s.Require().NoError(err)
+	s.NotEmpty(tools.Tools)
 }
 
 func (s *McpToolProcessingSuite) TestDisabledTools() {

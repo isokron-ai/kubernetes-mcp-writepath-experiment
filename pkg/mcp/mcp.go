@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -219,6 +220,9 @@ func NewServer(ctx context.Context, configuration Configuration, targetProvider 
 	// path entirely; protocolSendingMiddleware makes them visible at V(6).
 	s.server.AddSendingMiddleware(protocolSendingMiddleware)
 
+	if err = s.validateToolNames(ctx, s.configuration.Load()); err != nil {
+		return nil, err
+	}
 	err = s.applyToolsets(ctx, s.configuration.Load())
 	if err != nil {
 		return nil, err
@@ -484,6 +488,45 @@ func (s *Server) collectApplicableTools(ctx context.Context, cfg *Configuration)
 	return tools
 }
 
+// validateToolNames refuses enabled_tools and disabled_tools entries that name no tool
+// of any toolset this server provides. A misspelt name otherwise starts the server with
+// no tools (enabled_tools) or with the tool the operator meant to hide (disabled_tools).
+// A tool of a toolset that is not enabled is a valid name (it is simply not served). It
+// runs at start and on configuration reload, not when cluster state changes, so a tool
+// that a toolset offers only on some clusters cannot stop a running server.
+func (s *Server) validateToolNames(ctx context.Context, cfg *Configuration) error {
+	enabled, disabled := cfg.EnabledTools.Get(), cfg.DisabledTools.Get()
+	if len(enabled) == 0 && len(disabled) == 0 {
+		return nil
+	}
+	known := map[string]bool{}
+	rename := WithTargetListTool(s.p.GetDefaultTarget(), s.p.GetTargetParameterName(), s.p)
+	toolsetContext := s.toolsetContext(cfg)
+	for _, toolset := range toolsets.Toolsets() {
+		for _, tool := range toolset.GetTools(ctx, toolsetContext) {
+			known[tool.Tool.Name] = true
+			known[rename(tool).Tool.Name] = true
+		}
+	}
+	var errs []error
+	for _, option := range []struct {
+		name  string
+		names []string
+	}{{"enabled_tools", enabled}, {"disabled_tools", disabled}} {
+		var unknown []string
+		for _, name := range option.names {
+			if !known[name] {
+				unknown = append(unknown, name)
+			}
+		}
+		if len(unknown) > 0 {
+			errs = append(errs, fmt.Errorf("%s names tools that no toolset provides: %s (toolsets: %s)",
+				option.name, strings.Join(unknown, ", "), strings.Join(toolsets.ToolsetNames(), ", ")))
+		}
+	}
+	return errors.Join(errs...)
+}
+
 func (s *Server) toolsetContext(cfg *Configuration) api.ToolsetContext {
 	return api.ToolsetContext{
 		Inspector:                         internalk8s.NewClusterInspector(s.p),
@@ -721,6 +764,14 @@ func (s *Server) ReloadConfiguration(ctx context.Context, newConfig *config.Conf
 		candidate := &Configuration{Config: newConfig}
 		if prev := s.configuration.Load(); prev != nil {
 			candidate.SDKLogger = prev.SDKLogger
+		}
+		if err := s.validateToolNames(ctx, candidate); err != nil {
+			if prev := s.configuration.Load(); prev != nil && prev.Config != nil {
+				if rbErr := s.p.ReloadConfig(ctx, prev.Config); rbErr != nil {
+					logger.Error(rbErr, "Failed to roll back kubernetes provider config after tool name validation failure")
+				}
+			}
+			return fmt.Errorf("%w: %w", ErrReloadRejected, err)
 		}
 		if err := s.applyToolsetsLocked(ctx, candidate); err != nil {
 			if prev := s.configuration.Load(); prev != nil && prev.Config != nil {
