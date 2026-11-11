@@ -72,20 +72,20 @@ func startTask(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 		return api.NewToolCallResult("", fmt.Errorf("failed to start task: %w", err)), nil
 	}
 
+	rawParams, err := paramsArgument(params.GetArguments())
+	if err != nil {
+		return api.NewToolCallResult("", fmt.Errorf("failed to start task: %w", err)), nil
+	}
+	tektonParams, err := parseParams(rawParams)
+	if err != nil {
+		return api.NewToolCallResult("", fmt.Errorf("failed to parse params: %w", err)), nil
+	}
+
 	dynamicClient := params.DynamicClient()
 
 	// Verify that the Task exists
 	if _, err := dynamicClient.Resource(taskGVR).Namespace(namespace).Get(params.Context, name, metav1.GetOptions{}); err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to get Task %s/%s: %w", namespace, name, err)), nil
-	}
-
-	var tektonParams []tektonv1.Param
-	if rawParams, ok := params.GetArguments()["params"].(map[string]interface{}); ok {
-		var err error
-		tektonParams, err = parseParams(rawParams)
-		if err != nil {
-			return api.NewToolCallResult("", fmt.Errorf("failed to parse params: %w", err)), nil
-		}
 	}
 
 	tr := &tektonv1.TaskRun{

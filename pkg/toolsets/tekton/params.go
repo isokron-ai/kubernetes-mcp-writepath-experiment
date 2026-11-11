@@ -58,6 +58,21 @@ func hasPipelineRun(inspector api.ClusterInspector) api.TargetCompatibilityFilte
 	}
 }
 
+// paramsArgument returns the "params" tool argument as a map. A missing or null
+// argument gives nil; any other type is an error, so a wrongly typed value is
+// refused instead of being dropped and starting the run without parameters.
+func paramsArgument(args map[string]any) (map[string]interface{}, error) {
+	raw, ok := args["params"]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	m, ok := raw.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("params must be an object mapping each parameter name to its value, got %T", raw)
+	}
+	return m, nil
+}
+
 // parseParams converts a map[string]interface{} from a tool call argument into Tekton Params.
 // Each map entry becomes a Param whose value type is inferred from the Go value:
 //   - string  → ParamTypeString

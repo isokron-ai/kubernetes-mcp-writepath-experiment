@@ -902,6 +902,44 @@ func (s *TektonMcpSuite) createTektonConfig() {
 	s.Require().NoError(err)
 }
 
+func (s *TektonMcpSuite) TestStartRefusesWronglyTypedParams() {
+	for _, tc := range []struct{ tool, kind, resource string }{
+		{"tekton_task_start", "Task", "tasks"},
+		{"tekton_pipeline_start", "Pipeline", "pipelines"},
+	} {
+		s.Run(tc.tool+" with params given as a string", func() {
+			_, err := s.dynamic.Resource(schema.GroupVersionResource{Group: "tekton.dev", Version: "v1", Resource: tc.resource}).
+				Namespace(s.namespace).Create(s.T().Context(), &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "tekton.dev/v1",
+				"kind":       tc.kind,
+				"metadata":   map[string]interface{}{"name": "typed-params"},
+				"spec":       map[string]interface{}{},
+			}}, metav1.CreateOptions{})
+			s.Require().NoError(err)
+			result, err := s.CallTool(tc.tool, map[string]interface{}{
+				"name":      "typed-params",
+				"namespace": s.namespace,
+				"params":    "greeting=hello",
+			})
+			s.Require().NoError(err)
+			s.Run("returns an error", func() {
+				s.True(result.IsError, "a wrongly typed params argument must not start a run without parameters")
+				s.Contains(result.Content[0].(*mcp.TextContent).Text, "params must be an object")
+			})
+			s.Run("starts no run", func() {
+				runs := "taskruns"
+				if tc.kind == "Pipeline" {
+					runs = "pipelineruns"
+				}
+				list, listErr := s.dynamic.Resource(schema.GroupVersionResource{Group: "tekton.dev", Version: "v1", Resource: runs}).
+					Namespace(s.namespace).List(s.T().Context(), metav1.ListOptions{})
+				s.Require().NoError(listErr)
+				s.Empty(list.Items)
+			})
+		})
+	}
+}
+
 func TestTektonMcp(t *testing.T) {
 	suite.Run(t, new(TektonMcpSuite))
 }

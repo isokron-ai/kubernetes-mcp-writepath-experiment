@@ -72,20 +72,20 @@ func startPipeline(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 		return api.NewToolCallResult("", fmt.Errorf("failed to start pipeline: %w", err)), nil
 	}
 
+	rawParams, err := paramsArgument(params.GetArguments())
+	if err != nil {
+		return api.NewToolCallResult("", fmt.Errorf("failed to start pipeline: %w", err)), nil
+	}
+	tektonParams, err := parseParams(rawParams)
+	if err != nil {
+		return api.NewToolCallResult("", fmt.Errorf("failed to parse params: %w", err)), nil
+	}
+
 	dynamicClient := params.DynamicClient()
 
 	// Verify that the Pipeline exists
 	if _, err := dynamicClient.Resource(pipelineGVR).Namespace(namespace).Get(params.Context, name, metav1.GetOptions{}); err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to get Pipeline %s/%s: %w", namespace, name, err)), nil
-	}
-
-	var tektonParams []tektonv1.Param
-	if rawParams, ok := params.GetArguments()["params"].(map[string]interface{}); ok {
-		var err error
-		tektonParams, err = parseParams(rawParams)
-		if err != nil {
-			return api.NewToolCallResult("", fmt.Errorf("failed to parse params: %w", err)), nil
-		}
 	}
 
 	pr := &tektonv1.PipelineRun{

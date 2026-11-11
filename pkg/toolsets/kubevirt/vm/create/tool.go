@@ -266,7 +266,11 @@ func parseCreateParameters(params api.ToolHandlerParams) (*createParameters, err
 		return nil, err
 	}
 
-	networks, err := parseNetworks(optionalArray(params, "networks"))
+	rawNetworks, err := optionalArray(params, "networks")
+	if err != nil {
+		return nil, fmt.Errorf("invalid networks parameter: %w", err)
+	}
+	networks, err := parseNetworks(rawNetworks)
 	if err != nil {
 		return nil, fmt.Errorf("invalid networks parameter: %w", err)
 	}
@@ -286,18 +290,19 @@ func parseCreateParameters(params api.ToolHandlerParams) (*createParameters, err
 }
 
 // optionalArray extracts an optional array parameter from tool arguments.
-// Returns the array value if present and valid, or nil if missing or not an array.
-func optionalArray(params api.ToolHandlerParams, key string) []any {
+// Returns nil if the argument is missing or null, and an error if it is present
+// with any other type than an array (a wrongly typed value is refused, not dropped).
+func optionalArray(params api.ToolHandlerParams, key string) ([]any, error) {
 	args := params.GetArguments()
 	val, ok := args[key]
-	if !ok {
-		return nil
+	if !ok || val == nil {
+		return nil, nil
 	}
 	arr, ok := val.([]any)
 	if !ok {
-		return nil
+		return nil, fmt.Errorf("%s must be an array, got %T", key, val)
 	}
-	return arr
+	return arr, nil
 }
 
 // parseNetworks parses the networks input which is an array of either:

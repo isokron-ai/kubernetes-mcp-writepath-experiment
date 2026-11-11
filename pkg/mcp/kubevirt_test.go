@@ -141,6 +141,16 @@ func (s *KubevirtSuite) TestCreate() {
 			s.Equal("quay.io/containerdisks/fedora:latest", test.FieldString(vm, "spec.template.spec.volumes[0].containerDisk.image"))
 		})
 	})
+	s.Run("vm_create with networks given as a string", func() {
+		toolResult, err := s.CallTool("vm_create", map[string]interface{}{
+			"name":      "test-vm-string-networks",
+			"namespace": "default",
+			"networks":  "vlan-network",
+		})
+		s.Require().NoError(err)
+		s.True(toolResult.IsError, "a wrongly typed networks argument must not create a VM without networks")
+		s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "networks must be an array")
+	})
 	s.Run("vm_create(workload=ubuntu, instancetype=u1.medium) with instancetype", func() {
 		toolResult, err := s.CallTool("vm_create", map[string]interface{}{
 			"name":         "test-vm-2",
