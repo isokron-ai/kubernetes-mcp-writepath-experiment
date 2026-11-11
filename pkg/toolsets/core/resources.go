@@ -142,6 +142,15 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
 						Enum:        []any{"apply", "create"},
 						Description: "'apply' (default) creates the object or updates the fields it sets. 'create' only creates: an existing object of the same name is left untouched and the error names it and its field managers.",
 					},
+					"dry_run": {
+						Type:        "boolean",
+						Description: "Validate every document with a server-side dry run (admission, schema, field ownership) and write nothing. The result lists each document as the API would store it. A multi-document manifest is always validated this way before its first write.",
+					},
+					"on_failure": {
+						Type:        "string",
+						Enum:        []any{"stop", "rollback"},
+						Description: "For multi-document manifests, if a document fails after earlier ones were written: 'stop' (default) leaves the written ones and lists them; 'rollback' deletes the ones this call created. Objects that existed before are not restored. This is a compensating action, not a transaction: the result lists exactly what was rolled back and what was not.",
+					},
 				},
 				Required: []string{"resource"},
 			},
@@ -441,7 +450,18 @@ func resourcesCreateOrUpdate(params api.ToolHandlerParams) (*api.ToolCallResult,
 	}
 
 	p := api.WrapParams(params)
-	opts := kubernetes.ApplyOptions{Force: p.OptionalBool("force", false)}
+	opts := kubernetes.ApplyOptions{
+		Force:         p.OptionalBool("force", false),
+		DryRun:        p.OptionalBool("dry_run", false),
+		ValidateFirst: true,
+	}
+	switch onFailure := p.OptionalString("on_failure", "stop"); onFailure {
+	case "stop":
+	case "rollback":
+		opts.RollbackOnFailure = true
+	default:
+		return api.NewToolCallResult("", fmt.Errorf("failed to create or update resources: on_failure must be \"stop\" or \"rollback\", got %q", onFailure)), nil
+	}
 	switch mode := p.OptionalString("mode", "apply"); mode {
 	case "apply":
 	case "create":
@@ -464,6 +484,9 @@ func resourcesCreateOrUpdate(params api.ToolHandlerParams) (*api.ToolCallResult,
 	note := receiptNote
 	if full {
 		note = ""
+	}
+	if opts.DryRun {
+		return api.NewToolCallResult("# Dry run (server-side, dryRun=All): every document was accepted; nothing was written\n"+note+marshalledYaml, err), nil
 	}
 	return api.NewToolCallResult("# The following resources (YAML) have been created or updated successfully\n"+note+marshalledYaml, err), nil
 }

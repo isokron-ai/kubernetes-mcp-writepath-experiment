@@ -1007,6 +1007,10 @@
     "description": "Create or update a Kubernetes resource via Server-Side Apply. The manifest is the complete desired state: any field this tool previously set and the new manifest omits is removed. To edit an existing resource, fetch it with resources_get, modify it, then re-apply the full resource.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
     "inputSchema": {
       "properties": {
+        "dry_run": {
+          "description": "Validate every document with a server-side dry run (admission, schema, field ownership) and write nothing. The result lists each document as the API would store it. A multi-document manifest is always validated this way before its first write.",
+          "type": "boolean"
+        },
         "force": {
           "description": "Take over fields that other field managers own (server-side apply force). Default false: if the manifest sets a field another writer owns, nothing is written and the error names the fields and their managers, so a concurrent change is not silently reverted.",
           "type": "boolean"
@@ -1016,6 +1020,14 @@
           "enum": [
             "apply",
             "create"
+          ],
+          "type": "string"
+        },
+        "on_failure": {
+          "description": "For multi-document manifests, if a document fails after earlier ones were written: 'stop' (default) leaves the written ones and lists them; 'rollback' deletes the ones this call created. Objects that existed before are not restored. This is a compensating action, not a transaction: the result lists exactly what was rolled back and what was not.",
+          "enum": [
+            "stop",
+            "rollback"
           ],
           "type": "string"
         },

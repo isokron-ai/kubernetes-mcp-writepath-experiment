@@ -1599,7 +1599,7 @@ func (s *ResourcesSuite) TestResourcesCreateOrUpdatePartialFailure() {
 		_, err := client.CoreV1().ConfigMaps("default").Get(s.T().Context(), name, metav1.GetOptions{})
 		return err == nil
 	}
-	s.Run("a document refused by the API", func() {
+	s.Run("a document refused by the API is caught by the dry run before any write", func() {
 		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{
 			"resource": cm("partial-a") + "---\n" + cm("Partial_B") + "---\n" + cm("partial-c"),
 		})
@@ -1608,17 +1608,35 @@ func (s *ResourcesSuite) TestResourcesCreateOrUpdatePartialFailure() {
 		s.Run("returns an error", func() {
 			s.True(result.IsError)
 		})
-		s.Run("names the failed document", func() {
-			s.Contains(text, "document 2 (ConfigMap default/Partial_B) of 3 failed")
+		s.Run("lists every document with its verdict", func() {
+			s.Contains(text, "nothing was written")
+			s.Contains(text, "- document 1 (ConfigMap default/partial-a): ok")
+			s.Contains(text, "- document 2 (ConfigMap default/Partial_B): refused:")
+			s.Contains(text, "- document 3 (ConfigMap default/partial-c): ok")
 		})
-		s.Run("names the documents already applied", func() {
-			s.Contains(text, "already applied and left in place: document 1 (ConfigMap default/partial-a)")
-			s.True(exists("partial-a"))
-		})
-		s.Run("names the documents not attempted", func() {
-			s.Contains(text, "not attempted: document 3 (ConfigMap default/partial-c)")
+		s.Run("writes nothing", func() {
+			s.False(exists("partial-a"))
 			s.False(exists("partial-c"))
 		})
+	})
+	s.Run("dry_run validates and writes nothing", func() {
+		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{
+			"resource": cm("dry-a") + "---\n" + cm("dry-b"),
+			"dry_run":  true,
+		})
+		s.Require().NoError(err)
+		s.Falsef(result.IsError, "call tool failed: %v", result.Content)
+		s.Contains(result.Content[0].(*mcp.TextContent).Text, "# Dry run (server-side, dryRun=All): every document was accepted; nothing was written")
+		s.False(exists("dry-a"))
+		s.False(exists("dry-b"))
+	})
+	s.Run("a namespace created by an earlier document does not fail the dry run", func() {
+		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{
+			"resource": "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: ns-created-in-same-call\n---\n" +
+				"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: in-new-ns\n  namespace: ns-created-in-same-call\n",
+		})
+		s.Require().NoError(err)
+		s.Falsef(result.IsError, "call tool failed: %v", result.Content)
 	})
 	s.Run("an unknown kind fails before anything is applied", func() {
 		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{

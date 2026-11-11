@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/utils/ptr"
 )
 
 const (
@@ -84,6 +85,15 @@ type ApplyOptions struct {
 	// CreateOnly creates each object (POST) instead of applying it: an existing object of
 	// the same name is never modified, and the call fails with an AlreadyExistsError.
 	CreateOnly bool
+	// DryRun sends every document as a server-side dry run (dryRun=All) and writes nothing.
+	DryRun bool
+	// ValidateFirst dry-runs every document of a multi-document input before the first
+	// write; if any is refused, nothing is written.
+	ValidateFirst bool
+	// RollbackOnFailure deletes, when a later document fails, the objects this call created.
+	// It is a compensating action, not a transaction: objects that existed before and were
+	// changed are not restored, and a delete can itself fail. Both are reported.
+	RollbackOnFailure bool
 }
 
 // ResourcesApply parses a YAML or JSON manifest stream and writes every document.
@@ -285,12 +295,30 @@ type PartialApplyError struct {
 	Failed       ApplyOutcome
 	NotAttempted []ApplyOutcome
 	Err          error
+	// Set when ApplyOptions.RollbackOnFailure was requested.
+	RollbackRequested bool
+	RolledBack        []ApplyOutcome
+	NotRestored       []ApplyOutcome
+	RollbackFailed    []string
 }
 
 func (e *PartialApplyError) Error() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s of %d failed: %v", e.Failed, e.Total, e.Err)
-	if len(e.Applied) > 0 {
+	if e.RollbackRequested {
+		if len(e.RolledBack) > 0 {
+			b.WriteString("; created by this call and deleted again (rollback): ")
+			b.WriteString(joinOutcomes(e.RolledBack))
+		}
+		if len(e.NotRestored) > 0 {
+			b.WriteString("; existed before and were changed, NOT restored: ")
+			b.WriteString(joinOutcomes(e.NotRestored))
+		}
+		if len(e.RollbackFailed) > 0 {
+			b.WriteString("; rollback delete FAILED for: ")
+			b.WriteString(strings.Join(e.RollbackFailed, ", "))
+		}
+	} else if len(e.Applied) > 0 {
 		b.WriteString("; already applied and left in place: ")
 		b.WriteString(joinOutcomes(e.Applied))
 	}
@@ -350,17 +378,51 @@ func (c *Core) resourcesApply(ctx context.Context, resources []*unstructured.Uns
 			crdBefore = true
 		}
 	}
+
+	// Validate first: a server-side dry run of every document before the first write,
+	// so that one refused document stops the call with nothing written.
+	if opts.DryRun || (opts.ValidateFirst && len(resources) > 1) {
+		dryRun, err := c.validateDocuments(ctx, resources, gvrs, namespaces, outcomes, opts)
+		if err != nil {
+			return nil, err
+		}
+		if opts.DryRun {
+			return dryRun, nil
+		}
+	}
+
+	// existed[i] is known only when a rollback may be needed: it decides which objects
+	// this call created (and may delete again) and which it changed (and cannot restore).
+	existed := make([]bool, len(resources))
 	partial := func(i int, err error) error {
 		if len(resources) == 1 {
 			return err
 		}
-		return &PartialApplyError{
+		pe := &PartialApplyError{
 			Total:        len(resources),
 			Applied:      outcomes[:i],
 			Failed:       outcomes[i],
 			NotAttempted: outcomes[i+1:],
 			Err:          err,
 		}
+		if opts.RollbackOnFailure {
+			pe.RollbackRequested = true
+			for j := i - 1; j >= 0; j-- {
+				if existed[j] {
+					pe.NotRestored = append(pe.NotRestored, outcomes[j])
+					continue
+				}
+				delErr := c.DynamicClient().Resource(*gvrs[j]).Namespace(namespaces[j]).Delete(ctx, outcomes[j].Name, metav1.DeleteOptions{
+					PropagationPolicy: ptr.To(metav1.DeletePropagationBackground),
+				})
+				if delErr != nil && !apierrors.IsNotFound(delErr) {
+					pe.RollbackFailed = append(pe.RollbackFailed, fmt.Sprintf("%s: %v", outcomes[j], delErr))
+				} else {
+					pe.RolledBack = append(pe.RolledBack, outcomes[j])
+				}
+			}
+		}
+		return pe
 	}
 	for i, obj := range resources {
 		gvk := obj.GroupVersionKind()
@@ -378,22 +440,14 @@ func (c *Core) resourcesApply(ctx context.Context, resources []*unstructured.Uns
 		}
 		obj.SetNamespace(namespaces[i])
 		client := c.DynamicClient().Resource(*gvrs[i]).Namespace(namespaces[i])
-		var applied *unstructured.Unstructured
-		var err error
-		if opts.CreateOnly {
-			applied, err = client.Create(ctx, obj, metav1.CreateOptions{FieldManager: version.BinaryName})
-			if apierrors.IsAlreadyExists(err) {
-				err = c.alreadyExists(ctx, client, outcomes[i], err)
+		if opts.RollbackOnFailure {
+			_, getErr := client.Get(ctx, obj.GetName(), metav1.GetOptions{})
+			if getErr != nil && !apierrors.IsNotFound(getErr) {
+				return nil, partial(i, getErr)
 			}
-		} else {
-			applied, err = client.Apply(ctx, obj.GetName(), obj, metav1.ApplyOptions{
-				FieldManager: version.BinaryName,
-				Force:        opts.Force,
-			})
-			if !opts.Force && apierrors.IsConflict(err) {
-				err = fieldConflict(outcomes[i], err)
-			}
+			existed[i] = getErr == nil
 		}
+		applied, err := c.writeDocument(ctx, client, obj, outcomes[i], opts, false)
 		if err != nil {
 			return nil, partial(i, err)
 		}
@@ -404,6 +458,84 @@ func (c *Core) resourcesApply(ctx context.Context, resources []*unstructured.Uns
 		}
 	}
 	return resources, nil
+}
+
+// writeDocument creates or applies one object, as a server-side dry run if dryRun is set.
+func (c *Core) writeDocument(ctx context.Context, client dynamic.ResourceInterface, obj *unstructured.Unstructured, o ApplyOutcome, opts ApplyOptions, dryRun bool) (*unstructured.Unstructured, error) {
+	var dry []string
+	if dryRun {
+		dry = []string{metav1.DryRunAll}
+	}
+	if opts.CreateOnly {
+		created, err := client.Create(ctx, obj, metav1.CreateOptions{FieldManager: version.BinaryName, DryRun: dry})
+		if apierrors.IsAlreadyExists(err) {
+			err = c.alreadyExists(ctx, client, o, err)
+		}
+		return created, err
+	}
+	applied, err := client.Apply(ctx, obj.GetName(), obj, metav1.ApplyOptions{
+		FieldManager: version.BinaryName,
+		Force:        opts.Force,
+		DryRun:       dry,
+	})
+	if !opts.Force && apierrors.IsConflict(err) {
+		err = fieldConflict(o, err)
+	}
+	return applied, err
+}
+
+// validateDocuments dry-runs every document and returns the dry-run results, or a
+// ValidationError with the outcome of each document. A document whose kind or
+// namespace is created by an earlier document of the same input cannot be checked
+// before that document exists; it is reported as checked at write time.
+func (c *Core) validateDocuments(ctx context.Context, resources []*unstructured.Unstructured, gvrs []*schema.GroupVersionResource, namespaces []string, outcomes []ApplyOutcome, opts ApplyOptions) ([]*unstructured.Unstructured, error) {
+	newNamespaces := map[string]bool{}
+	results := make([]*unstructured.Unstructured, len(resources))
+	verdicts := make([]string, len(resources))
+	failed := false
+	for i, obj := range resources {
+		if gvrs[i] == nil {
+			verdicts[i] = "not checked: its kind is defined by an earlier document"
+			continue
+		}
+		copied := obj.DeepCopy()
+		copied.SetNamespace(namespaces[i])
+		client := c.DynamicClient().Resource(*gvrs[i]).Namespace(namespaces[i])
+		result, err := c.writeDocument(ctx, client, copied, outcomes[i], opts, true)
+		switch {
+		case err == nil:
+			results[i] = result
+			verdicts[i] = "ok"
+		case apierrors.IsNotFound(err) && newNamespaces[namespaces[i]]:
+			verdicts[i] = "not checked: its namespace is created by an earlier document"
+		default:
+			failed = true
+			verdicts[i] = "refused: " + err.Error()
+		}
+		if obj.GetKind() == "Namespace" && obj.GetAPIVersion() == "v1" {
+			newNamespaces[obj.GetName()] = true
+		}
+	}
+	if failed {
+		return nil, &ValidationError{Outcomes: outcomes, Verdicts: verdicts}
+	}
+	return results, nil
+}
+
+// ValidationError reports a server-side dry run that refused at least one document:
+// nothing was written. It lists every document with its verdict.
+type ValidationError struct {
+	Outcomes []ApplyOutcome
+	Verdicts []string
+}
+
+func (e *ValidationError) Error() string {
+	var b strings.Builder
+	b.WriteString("validation (server-side dry run) refused the input, nothing was written:")
+	for i, o := range e.Outcomes {
+		fmt.Fprintf(&b, "\n- %s: %s", o, e.Verdicts[i])
+	}
+	return b.String()
 }
 
 // FieldConflictError is a server-side apply refused because fields in the manifest
