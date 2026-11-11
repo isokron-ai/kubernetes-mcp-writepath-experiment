@@ -43,7 +43,13 @@ func Tools(inspector api.ClusterInspector) []api.ServerTool {
 						"action": {
 							Type:        "string",
 							Enum:        []any{string(ActionStart), string(ActionStop), string(ActionRestart), string(ActionPause), string(ActionUnpause)},
-							Description: "The lifecycle action to perform: 'start' (changes runStrategy to Always), 'stop' (changes runStrategy to Halted), 'restart' (stops then starts the VM), 'pause' (suspends the running VMI in-place), or 'unpause' (resumes a paused VMI)",
+							Description: "The lifecycle action to perform: 'start' (changes runStrategy to Always, or to run_policy's), 'stop' (changes runStrategy to Halted), 'restart' (stops then starts the VM, keeping its run strategy unless run_policy is given), 'pause' (suspends the running VMI in-place), or 'unpause' (resumes a paused VMI)",
+						},
+						"run_policy": {
+							Type: "string",
+							Enum: []any{"HighAvailability", "RestartOnFailure", "Once"},
+							Description: "start and restart only: the run strategy to set. HighAvailability (runStrategy Always), RestartOnFailure (RerunOnFailure) or Once. " +
+								"start defaults to HighAvailability; restart defaults to the VM's own run strategy (Always if it was Halted).",
 						},
 					},
 					Required: []string{"namespace", "name", "action"},
@@ -101,6 +107,15 @@ func lifecycle(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 		return api.NewToolCallResult("", err), nil
 	}
 
+	runPolicy := api.OptionalString(params, "run_policy", "")
+	var strategy kubevirt.RunStrategy
+	if runPolicy != "" {
+		var ok bool
+		if strategy, ok = kubevirt.RunPolicies[runPolicy]; !ok {
+			return api.NewToolCallResult("", fmt.Errorf("invalid run_policy '%s': must be one of 'HighAvailability', 'RestartOnFailure', 'Once'", runPolicy)), nil
+		}
+	}
+
 	dynamicClient := params.DynamicClient()
 
 	var vm *unstructured.Unstructured
@@ -109,7 +124,11 @@ func lifecycle(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 	switch Action(action) {
 	case ActionStart:
 		var wasStarted bool
-		vm, wasStarted, err = kubevirt.StartVM(params.Context, dynamicClient, namespace, name)
+		startStrategy := strategy
+		if startStrategy == "" {
+			startStrategy = kubevirt.RunStrategyAlways
+		}
+		vm, wasStarted, err = kubevirt.StartVMWithStrategy(params.Context, dynamicClient, namespace, name, startStrategy)
 		if err != nil {
 			return api.NewToolCallResult("", err), nil
 		}
@@ -132,11 +151,12 @@ func lifecycle(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 		}
 
 	case ActionRestart:
-		vm, err = kubevirt.RestartVM(params.Context, dynamicClient, namespace, name)
+		var restartedWith kubevirt.RunStrategy
+		vm, restartedWith, err = kubevirt.RestartVMWithStrategy(params.Context, dynamicClient, namespace, name, strategy)
 		if err != nil {
 			return api.NewToolCallResult("", err), nil
 		}
-		message = "# VirtualMachine restarted successfully\n"
+		message = fmt.Sprintf("# VirtualMachine restarted successfully (runStrategy %s)\n", restartedWith)
 
 	case ActionPause:
 		vm, err = kubevirt.PauseVM(params.Context, dynamicClient, params.RESTConfig(), namespace, name)

@@ -817,6 +817,45 @@ func (s *KubevirtSuite) TestVMClone() {
 
 }
 
+func (s *KubevirtSuite) TestVMLifecycleRunPolicy() {
+	dynamicClient := dynamic.NewForConfigOrDie(test.EnvTestRestConfig())
+	vms := dynamicClient.Resource(schema.GroupVersionResource{Group: "kubevirt.io", Version: "v1", Resource: "virtualmachines"}).Namespace("default")
+	create := func(name, strategy string) {
+		_, err := vms.Create(s.T().Context(), &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "kubevirt.io/v1",
+			"kind":       "VirtualMachine",
+			"metadata":   map[string]interface{}{"name": name, "namespace": "default"},
+			"spec":       map[string]interface{}{"runStrategy": strategy, "template": map[string]interface{}{"spec": map[string]interface{}{}}},
+		}}, metav1.CreateOptions{})
+		s.Require().NoError(err)
+	}
+	strategyOf := func(name string) string {
+		vm, err := vms.Get(s.T().Context(), name, metav1.GetOptions{})
+		s.Require().NoError(err)
+		return test.FieldString(vm, "spec.runStrategy")
+	}
+	s.Run("start with run_policy RestartOnFailure", func() {
+		create("vm-run-policy-start", "Halted")
+		result, err := s.CallTool("vm_lifecycle", map[string]interface{}{"name": "vm-run-policy-start", "namespace": "default", "action": "start", "run_policy": "RestartOnFailure"})
+		s.Require().NoError(err)
+		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
+		s.Equal("RerunOnFailure", strategyOf("vm-run-policy-start"))
+	})
+	s.Run("restart keeps the VM's run strategy", func() {
+		create("vm-restart-keeps", "Manual")
+		result, err := s.CallTool("vm_lifecycle", map[string]interface{}{"name": "vm-restart-keeps", "namespace": "default", "action": "restart"})
+		s.Require().NoError(err)
+		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
+		s.Contains(result.Content[0].(*mcp.TextContent).Text, "restarted successfully (runStrategy Manual)")
+		s.Equal("Manual", strategyOf("vm-restart-keeps"))
+	})
+	s.Run("an unknown run_policy is refused", func() {
+		result, err := s.CallTool("vm_lifecycle", map[string]interface{}{"name": "vm-restart-keeps", "namespace": "default", "action": "start", "run_policy": "Forever"})
+		s.Require().NoError(err)
+		s.True(result.IsError)
+	})
+}
+
 func (s *KubevirtSuite) TestVMCloneIsNotIdempotent() {
 	tools, err := s.ListTools()
 	s.Require().NoError(err)
