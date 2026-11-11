@@ -120,6 +120,50 @@ func (s *HelmSuite) TestHelmInstallInNamespace() {
 	})
 }
 
+func (s *HelmSuite) TestHelmInstallWaitOptions() {
+	s.InitMcpClient()
+	kc := kubernetes.NewForConfigOrDie(test.EnvTestRestConfig())
+	ns, err := kc.CoreV1().Namespaces().Create(s.T().Context(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{GenerateName: "helm-wait-"}}, metav1.CreateOptions{})
+	s.Require().NoError(err)
+	defer func() {
+		// envtest runs no namespace controller: remove the release records explicitly
+		_ = kc.CoreV1().Secrets(ns.Name).DeleteCollection(context.Background(), metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: "owner=helm"})
+		_ = kc.CoreV1().Namespaces().Delete(context.Background(), ns.Name, metav1.DeleteOptions{})
+	}()
+	_, file, _, _ := runtime.Caller(0)
+	chartPath := filepath.Join(filepath.Dir(file), "testdata", "helm-chart-never-ready")
+	s.Run("wait: false returns once the objects are created", func() {
+		result, err := s.CallTool("helm_install", map[string]interface{}{"chart": chartPath, "name": "no-wait", "namespace": ns.Name, "wait": false})
+		s.Require().NoError(err)
+		s.Falsef(result.IsError, "call tool failed: %v", result.Content)
+		_, getErr := kc.AppsV1().Deployments(ns.Name).Get(s.T().Context(), "no-wait-stuck", metav1.GetOptions{})
+		s.NoError(getErr)
+	})
+	s.Run("a timeout with rollback_on_failure leaves nothing behind", func() {
+		result, err := s.CallTool("helm_install", map[string]interface{}{
+			"chart": chartPath, "name": "atomic", "namespace": ns.Name, "timeout": "2s", "rollback_on_failure": true,
+		})
+		s.Require().NoError(err)
+		s.True(result.IsError)
+		_, getErr := kc.AppsV1().Deployments(ns.Name).Get(s.T().Context(), "atomic-stuck", metav1.GetOptions{})
+		s.Truef(errors.IsNotFound(getErr), "the release's objects must be removed")
+		secrets, listErr := kc.CoreV1().Secrets(ns.Name).List(s.T().Context(), metav1.ListOptions{LabelSelector: "owner=helm,name=atomic"})
+		s.Require().NoError(listErr)
+		s.Empty(secrets.Items, "no release record may remain")
+	})
+	s.Run("a timeout without rollback names the release state", func() {
+		result, err := s.CallTool("helm_install", map[string]interface{}{"chart": chartPath, "name": "stuck", "namespace": ns.Name, "timeout": "2s"})
+		s.Require().NoError(err)
+		s.True(result.IsError)
+		s.Contains(result.Content[0].(*mcp.TextContent).Text, "release stuck is now in state \"failed\" in namespace "+ns.Name)
+	})
+	s.Run("an invalid timeout is refused", func() {
+		result, err := s.CallTool("helm_install", map[string]interface{}{"chart": chartPath, "name": "bad-timeout", "timeout": "four minutes"})
+		s.Require().NoError(err)
+		s.True(result.IsError)
+	})
+}
+
 func (s *HelmSuite) TestHelmInstallDenied() {
 	configtest.OverlayTOML(s.T(), &s.Cfg, `
 		denied_resources = [ { version = "v1", kind = "Secret" } ]

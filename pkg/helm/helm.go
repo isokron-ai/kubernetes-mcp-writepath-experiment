@@ -37,7 +37,25 @@ func NewHelm(kubernetes Kubernetes, config *Config) *Helm {
 	return &Helm{kubernetes: kubernetes, config: config}
 }
 
+// InstallOptions are helm_install's waiting and failure options. The zero value is the
+// historical behaviour: wait 5 minutes for every object to be ready, no rollback.
+// Upstream #1334 proposes the same wait and timeout as toolset-level defaults.
+type InstallOptions struct {
+	// NoWait returns as soon as the objects are created (helm install without --wait).
+	NoWait bool
+	// Timeout of the wait and of hooks; 0 means 5 minutes.
+	Timeout time.Duration
+	// RollbackOnFailure uninstalls the release if the install fails or times out
+	// (helm install --atomic), so the name is free for a retry. It implies waiting.
+	RollbackOnFailure bool
+}
+
 func (h *Helm) Install(ctx context.Context, chart string, values map[string]interface{}, name string, namespace string) (string, error) {
+	return h.InstallWithOptions(ctx, chart, values, name, namespace, InstallOptions{})
+}
+
+// InstallWithOptions installs a chart with explicit wait, timeout and rollback options.
+func (h *Helm) InstallWithOptions(ctx context.Context, chart string, values map[string]interface{}, name string, namespace string, opts InstallOptions) (string, error) {
 	if err := validateChartReference(chart, h.config); err != nil {
 		return "", err
 	}
@@ -53,8 +71,12 @@ func (h *Helm) Install(ctx context.Context, chart string, values map[string]inte
 		install.ReleaseName = name
 	}
 	install.Namespace = h.kubernetes.NamespaceOrDefault(namespace)
-	install.Wait = true
+	install.Wait = !opts.NoWait || opts.RollbackOnFailure
 	install.Timeout = 5 * time.Minute
+	if opts.Timeout > 0 {
+		install.Timeout = opts.Timeout
+	}
+	install.Atomic = opts.RollbackOnFailure
 	install.DryRun = false
 
 	chartRequested, err := install.LocateChart(chart, cli.New())
@@ -68,7 +90,7 @@ func (h *Helm) Install(ctx context.Context, chart string, values map[string]inte
 
 	installedRelease, err := install.RunWithContext(ctx, chartLoaded, values)
 	if err != nil {
-		return "", err
+		return "", h.withReleaseState(ctx, install.ReleaseName, install.Namespace, err)
 	}
 	ret, err := yaml.Marshal(simplify(installedRelease))
 	if err != nil {
@@ -116,7 +138,29 @@ func helmPageNote(limit, offset, count int) string {
 	return ""
 }
 
+// withReleaseState adds the state the failed operation left the release in, so the
+// caller knows whether the name is still taken and what to do next.
+func (h *Helm) withReleaseState(ctx context.Context, name, namespace string, err error) error {
+	if name == "" {
+		return err
+	}
+	cfg, cfgErr := h.newAction(ctx, namespace, false)
+	if cfgErr != nil {
+		return err
+	}
+	rel, statusErr := action.NewStatus(cfg).Run(name)
+	if statusErr != nil || rel == nil || rel.Info == nil {
+		return err
+	}
+	return fmt.Errorf("%w (release %s is now in state %q in namespace %s; its objects may remain: helm_uninstall it before reusing the name, or retry with rollback_on_failure)", err, name, rel.Info.Status.String(), namespace)
+}
+
 func (h *Helm) Uninstall(ctx context.Context, name string, namespace string) (string, error) {
+	return h.UninstallWithOptions(ctx, name, namespace, InstallOptions{})
+}
+
+// UninstallWithOptions uninstalls a release; NoWait and Timeout apply to the wait for its objects to be deleted.
+func (h *Helm) UninstallWithOptions(ctx context.Context, name string, namespace string, opts InstallOptions) (string, error) {
 	cfg, err := h.newAction(ctx, h.kubernetes.NamespaceOrDefault(namespace), false)
 	if err != nil {
 		return "", err
@@ -127,8 +171,11 @@ func (h *Helm) Uninstall(ctx context.Context, name string, namespace string) (st
 	// release that really does not exist is reported as not found (with success, as
 	// before); any other lookup error is returned.
 	uninstall.IgnoreNotFound = false
-	uninstall.Wait = true
+	uninstall.Wait = !opts.NoWait
 	uninstall.Timeout = 5 * time.Minute
+	if opts.Timeout > 0 {
+		uninstall.Timeout = opts.Timeout
+	}
 	uninstalledRelease, err := uninstall.Run(name)
 	if errors.Is(err, driver.ErrReleaseNotFound) {
 		return fmt.Sprintf("Release %s not found", name), nil

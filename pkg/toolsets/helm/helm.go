@@ -3,6 +3,7 @@ package helm
 import (
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/containers/kubernetes-mcp-server/pkg/helm"
 	"github.com/containers/kubernetes-mcp-server/pkg/kubernetes"
@@ -36,6 +37,18 @@ func initHelm() []api.ServerTool {
 					"namespace": {
 						Type:        "string",
 						Description: "Namespace to install the Helm chart in (Optional, current namespace if not provided)",
+					},
+					"wait": {
+						Type:        "boolean",
+						Description: "Wait until every object of the release is ready (default true). With false the call returns once the objects are created; follow them with the core tools.",
+					},
+					"timeout": {
+						Type:        "string",
+						Description: "How long to wait for readiness and hooks, as a Go duration such as '45s' or '4m' (default '5m'). Keep it under your client's request timeout, or the outcome is lost.",
+					},
+					"rollback_on_failure": {
+						Type:        "boolean",
+						Description: "If the install fails or times out, uninstall the release again (helm install --atomic), so nothing is left behind and the name is free for a retry. Implies wait.",
 					},
 				},
 				Required: []string{"chart"},
@@ -105,6 +118,14 @@ func initHelm() []api.ServerTool {
 						Type:        "string",
 						Description: "Namespace to uninstall the Helm release from (Optional, current namespace if not provided)",
 					},
+					"wait": {
+						Type:        "boolean",
+						Description: "Wait until the release's objects are deleted (default true).",
+					},
+					"timeout": {
+						Type:        "string",
+						Description: "How long to wait, as a Go duration such as '60s' (default '5m').",
+					},
 				},
 				Required: []string{"name"},
 			},
@@ -167,11 +188,15 @@ func helmInstall(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 	if v, ok := params.GetArguments()["namespace"].(string); ok {
 		namespace = v
 	}
+	opts, err := helmWaitOptions(params)
+	if err != nil {
+		return api.NewToolCallResult("", fmt.Errorf("failed to install helm chart '%s': %w", chart, err)), nil
+	}
 	client, err := newHelmClient(params)
 	if err != nil {
 		return api.NewToolCallResult("", err), nil
 	}
-	ret, err := client.Install(params, chart, values, name, namespace)
+	ret, err := client.InstallWithOptions(params, chart, values, name, namespace, opts)
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to install helm chart '%s': %w", chart, err)), nil
 	}
@@ -210,13 +235,38 @@ func helmUninstall(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 	if v, ok := params.GetArguments()["namespace"].(string); ok {
 		namespace = v
 	}
+	opts, err := helmWaitOptions(params)
+	if err != nil {
+		return api.NewToolCallResult("", fmt.Errorf("failed to uninstall helm chart '%s': %w", name, err)), nil
+	}
 	client, err := newHelmClient(params)
 	if err != nil {
 		return api.NewToolCallResult("", err), nil
 	}
-	ret, err := client.Uninstall(params.Context, name, namespace)
+	ret, err := client.UninstallWithOptions(params.Context, name, namespace, opts)
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to uninstall helm chart '%s': %w", name, err)), nil
 	}
 	return api.NewToolCallResult(ret, err), nil
+}
+
+// helmWaitOptions reads the wait, timeout and rollback_on_failure arguments.
+func helmWaitOptions(params api.ToolHandlerParams) (helm.InstallOptions, error) {
+	p := api.WrapParams(params)
+	opts := helm.InstallOptions{
+		NoWait:            !p.OptionalBool("wait", true),
+		RollbackOnFailure: p.OptionalBool("rollback_on_failure", false),
+	}
+	timeout := p.OptionalString("timeout", "")
+	if err := p.Err(); err != nil {
+		return opts, err
+	}
+	if timeout != "" {
+		d, err := time.ParseDuration(timeout)
+		if err != nil || d <= 0 {
+			return opts, fmt.Errorf("timeout must be a positive Go duration such as '45s' or '4m', got %q", timeout)
+		}
+		opts.Timeout = d
+	}
+	return opts, nil
 }

@@ -1,9 +1,12 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/utils/ptr"
 
 	"github.com/containers/kubernetes-mcp-server/pkg/api"
@@ -27,6 +30,7 @@ func initRollout() []api.ServerTool {
 					"namespace":   {Type: "string", Description: "Namespace of the workload (configured namespace if not provided)"},
 					"name":        {Type: "string", Description: "Name of the workload"},
 					"to_revision": {Type: "integer", Description: "undo only: the revision to roll back to (default: the previous one)"},
+					"wait":        waitProperty,
 				},
 				Required: []string{"action", "kind", "name"},
 			},
@@ -57,10 +61,15 @@ func resourcesRollout(params api.ToolHandlerParams) (*api.ToolCallResult, error)
 	name := p.RequiredString("name")
 	ns := p.OptionalString("namespace", "")
 	toRevision := p.OptionalInt64("to_revision", 0)
-	if err := p.Err(); err != nil {
+	wait, waitErr := waitSeconds(p)
+	if err := errors.Join(p.Err(), waitErr); err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to %s rollout: %w", action, err)), nil
 	}
 	core := kubernetes.NewCore(params)
+	if wait > 0 && action == "status" {
+		gvk := schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: kind}
+		_, _, _ = core.WaitFor(params.Context, &gvk, ns, name, false, wait)
+	}
 	switch action {
 	case "status":
 		st, err := core.RolloutStatusOf(params, kind, ns, name)
@@ -78,13 +87,21 @@ func resourcesRollout(params api.ToolHandlerParams) (*api.ToolCallResult, error)
 		if err != nil {
 			return api.NewToolCallResult("", fmt.Errorf("failed to restart rollout: %w", err)), nil
 		}
-		return api.NewToolCallResult(fmt.Sprintf("# %s %s/%s restart requested (generation %d); call resources_rollout status to follow it\n", kind, obj.GetNamespace(), name, obj.GetGeneration()), nil), nil
+		text := fmt.Sprintf("# %s %s/%s restart requested (generation %d); call resources_rollout status to follow it\n", kind, obj.GetNamespace(), name, obj.GetGeneration())
+		if wait > 0 {
+			text += waitForObjects(params, []*unstructured.Unstructured{obj}, wait)
+		}
+		return api.NewToolCallResult(text, nil), nil
 	case "undo":
 		obj, from, to, err := core.RolloutUndo(params, kind, ns, name, toRevision)
 		if err != nil {
 			return api.NewToolCallResult("", fmt.Errorf("failed to undo rollout: %w", err)), nil
 		}
-		return api.NewToolCallResult(fmt.Sprintf("# %s %s/%s rolled back from revision %d to the Pod template of revision %d (the rollout creates a new revision); call resources_rollout status to follow it\n", kind, obj.GetNamespace(), name, from, to), nil), nil
+		text := fmt.Sprintf("# %s %s/%s rolled back from revision %d to the Pod template of revision %d (the rollout creates a new revision); call resources_rollout status to follow it\n", kind, obj.GetNamespace(), name, from, to)
+		if wait > 0 {
+			text += waitForObjects(params, []*unstructured.Unstructured{obj}, wait)
+		}
+		return api.NewToolCallResult(text, nil), nil
 	}
 	return api.NewToolCallResult("", fmt.Errorf("action must be restart, undo or status, got %q", action)), nil
 }

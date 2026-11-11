@@ -30,10 +30,22 @@
           "description": "Namespace to install the Helm chart in (Optional, current namespace if not provided)",
           "type": "string"
         },
+        "rollback_on_failure": {
+          "description": "If the install fails or times out, uninstall the release again (helm install --atomic), so nothing is left behind and the name is free for a retry. Implies wait.",
+          "type": "boolean"
+        },
+        "timeout": {
+          "description": "How long to wait for readiness and hooks, as a Go duration such as '45s' or '4m' (default '5m'). Keep it under your client's request timeout, or the outcome is lost.",
+          "type": "string"
+        },
         "values": {
           "description": "Values to pass to the Helm chart (Optional)",
           "properties": {},
           "type": "object"
+        },
+        "wait": {
+          "description": "Wait until every object of the release is ready (default true). With false the call returns once the objects are created; follow them with the core tools.",
+          "type": "boolean"
         }
       },
       "required": [
@@ -140,6 +152,14 @@
         "namespace": {
           "description": "Namespace to uninstall the Helm release from (Optional, current namespace if not provided)",
           "type": "string"
+        },
+        "timeout": {
+          "description": "How long to wait, as a Go duration such as '60s' (default '5m').",
+          "type": "string"
+        },
+        "wait": {
+          "description": "Wait until the release's objects are deleted (default true).",
+          "type": "boolean"
         }
       },
       "required": [

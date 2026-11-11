@@ -184,6 +184,7 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
 						Enum:        []any{"stop", "rollback"},
 						Description: "For multi-document manifests, if a document fails after earlier ones were written: 'stop' (default) leaves the written ones and lists them; 'rollback' deletes the ones this call created. Objects that existed before are not restored. This is a compensating action, not a transaction: the result lists exactly what was rolled back and what was not.",
 					},
+					"wait": waitProperty,
 				},
 				Required: []string{"resource"},
 			},
@@ -327,6 +328,7 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
 						Type:        "boolean",
 						Description: "With labelSelector: list the objects that would be affected and change nothing.",
 					},
+					"wait": waitProperty,
 				},
 				Required: []string{"apiVersion", "kind"},
 			},
@@ -388,6 +390,7 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
 						Type:        "boolean",
 						Description: "With labelSelector: list the objects that would be affected and change nothing.",
 					},
+					"wait": waitProperty,
 				},
 				Required: []string{"apiVersion", "kind"},
 			},
@@ -676,7 +679,8 @@ func resourcesCreateOrUpdate(params api.ToolHandlerParams) (*api.ToolCallResult,
 	default:
 		return api.NewToolCallResult("", fmt.Errorf("failed to create or update resources: mode must be \"apply\" or \"create\", got %q", mode)), nil
 	}
-	if err := p.Err(); err != nil {
+	wait, waitErr := waitSeconds(p)
+	if err := errors.Join(p.Err(), waitErr); err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to create or update resources: %w", err)), nil
 	}
 
@@ -694,6 +698,9 @@ func resourcesCreateOrUpdate(params api.ToolHandlerParams) (*api.ToolCallResult,
 	}
 	if opts.DryRun {
 		return api.NewToolCallResult("# Dry run (server-side, dryRun=All): every document was accepted; nothing was written\n"+note+marshalledYaml, err), nil
+	}
+	if wait > 0 {
+		note += waitForObjects(params, resources, wait)
 	}
 	return api.NewToolCallResult("# The following resources (YAML) have been created or updated successfully\n"+note+marshalledYaml, err), nil
 }
@@ -795,7 +802,13 @@ func resourcesDelete(params api.ToolHandlerParams) (*api.ToolCallResult, error) 
 		}
 		return api.NewToolCallResult("", fmt.Errorf("failed to delete resource: %w", err)), nil
 	}
-	return api.NewToolCallResult(deleteOutcomeText(gvk.Kind, ns, n, outcome), nil), nil
+	text := deleteOutcomeText(gvk.Kind, ns, n, outcome)
+	if wait, waitErr := waitSeconds(p); waitErr != nil {
+		return api.NewToolCallResult("", fmt.Errorf("failed to delete resource: %w", waitErr)), nil
+	} else if wait > 0 && outcome.Pending {
+		text += "\n" + waitForGone(params, gvk, ns, n, wait)
+	}
+	return api.NewToolCallResult(text, nil), nil
 }
 
 // deleteOutcomeText states whether the object is gone or still pending.
@@ -890,6 +903,15 @@ func resourcesScale(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 	text, err := scaleResultText(gvk, scale, full)
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to marshall scale to yaml format: %v", scale)), nil
+	}
+	if wait, waitErr := waitSeconds(api.WrapParams(params)); waitErr != nil {
+		return api.NewToolCallResult("", fmt.Errorf("failed to get/update resource scale: %w", waitErr)), nil
+	} else if wait > 0 && shouldScale {
+		target := &unstructured.Unstructured{}
+		target.SetGroupVersionKind(*gvk)
+		target.SetNamespace(scale.GetNamespace())
+		target.SetName(n)
+		text += waitForObjects(params, []*unstructured.Unstructured{target}, wait)
 	}
 
 	return api.NewToolCallResult(text, nil), nil

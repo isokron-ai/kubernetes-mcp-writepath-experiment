@@ -1121,6 +1121,12 @@
         "resource": {
           "description": "Complete YAML or JSON representation of the Kubernetes resource (full desired state, not a partial patch). Include apiVersion, kind, metadata, and the full spec.",
           "type": "string"
+        },
+        "wait": {
+          "description": "Optional: wait up to this many seconds (max 120; keep it under your client's request timeout) for the result: a workload's rollout complete, a Pod Ready, a Job complete, a deleted object gone. The result then says whether that state was reached; a timeout is reported, not treated as a failure of the write.",
+          "maximum": 120,
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "required": [
@@ -1227,6 +1233,12 @@
         "uid": {
           "description": "Optional precondition: the metadata.uid you read. The delete is refused if the object was deleted and recreated under the same name since.",
           "type": "string"
+        },
+        "wait": {
+          "description": "Optional: wait up to this many seconds (max 120; keep it under your client's request timeout) for the result: a workload's rollout complete, a Pod Ready, a Job complete, a deleted object gone. The result then says whether that state was reached; a timeout is reported, not treated as a failure of the write.",
+          "maximum": 120,
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "required": [
@@ -1670,6 +1682,12 @@
         "to_revision": {
           "description": "undo only: the revision to roll back to (default: the previous one)",
           "type": "integer"
+        },
+        "wait": {
+          "description": "Optional: wait up to this many seconds (max 120; keep it under your client's request timeout) for the result: a workload's rollout complete, a Pod Ready, a Job complete, a deleted object gone. The result then says whether that state was reached; a timeout is reported, not treated as a failure of the write.",
+          "maximum": 120,
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "required": [
@@ -1770,6 +1788,12 @@
         },
         "scale": {
           "description": "Optional scale to update the resources scale to. If not provided, will return the current scale of the resource, and not update it",
+          "type": "integer"
+        },
+        "wait": {
+          "description": "Optional: wait up to this many seconds (max 120; keep it under your client's request timeout) for the result: a workload's rollout complete, a Pod Ready, a Job complete, a deleted object gone. The result then says whether that state was reached; a timeout is reported, not treated as a failure of the write.",
+          "maximum": 120,
+          "minimum": 0,
           "type": "integer"
         }
       },

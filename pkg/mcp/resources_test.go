@@ -1576,6 +1576,34 @@ func (s *ResourcesSuite) TestResourcesDeleteTellsTheTruth() {
 	})
 }
 
+func (s *ResourcesSuite) TestResourcesWait() {
+	s.InitMcpClient()
+	s.Run("create_or_update waits for a ConfigMap to exist", func() {
+		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{
+			"resource": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm-waited\n  namespace: default\n", "wait": 5,
+		})
+		s.Require().NoError(err)
+		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
+		s.Contains(result.Content[0].(*mcp.TextContent).Text, "# wait: ConfigMap default/cm-waited is ready (exists)")
+	})
+	s.Run("a Deployment that never becomes ready is reported, not failed", func() {
+		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{
+			"resource": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: never-ready\n  namespace: default\nspec:\n  replicas: 1\n  selector:\n    matchLabels:\n      app: nr\n  template:\n    metadata:\n      labels:\n        app: nr\n    spec:\n      containers:\n      - name: c\n        image: nginx\n",
+			"wait":     1,
+		})
+		s.Require().NoError(err)
+		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
+		s.Contains(result.Content[0].(*mcp.TextContent).Text, "# wait: Deployment default/never-ready is NOT ready yet after the wait (0/1 updated")
+	})
+	s.Run("a wait above the maximum is refused", func() {
+		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{
+			"resource": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm-not-waited\n  namespace: default\n", "wait": 600,
+		})
+		s.Require().NoError(err)
+		s.True(result.IsError)
+	})
+}
+
 func TestResources(t *testing.T) {
 	suite.Run(t, new(ResourcesSuite))
 }
