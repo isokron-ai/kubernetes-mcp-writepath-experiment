@@ -1462,3 +1462,46 @@ func (s *ResourcesSuite) TestResourcesCreateOrUpdateDocumentSeparators() {
 		s.False(exists("sep-nokind-1"), "no document may be applied when one cannot be decoded")
 	})
 }
+
+func (s *ResourcesSuite) TestResourcesCreateOrUpdatePartialFailure() {
+	s.InitMcpClient()
+	client := kubernetes.NewForConfigOrDie(test.EnvTestRestConfig())
+	cm := func(name string) string {
+		return "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: " + name + "\n  namespace: default\n"
+	}
+	exists := func(name string) bool {
+		_, err := client.CoreV1().ConfigMaps("default").Get(s.T().Context(), name, metav1.GetOptions{})
+		return err == nil
+	}
+	s.Run("a document refused by the API", func() {
+		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{
+			"resource": cm("partial-a") + "---\n" + cm("Partial_B") + "---\n" + cm("partial-c"),
+		})
+		s.Require().NoError(err)
+		text := result.Content[0].(*mcp.TextContent).Text
+		s.Run("returns an error", func() {
+			s.True(result.IsError)
+		})
+		s.Run("names the failed document", func() {
+			s.Contains(text, "document 2 (ConfigMap default/Partial_B) of 3 failed")
+		})
+		s.Run("names the documents already applied", func() {
+			s.Contains(text, "already applied and left in place: document 1 (ConfigMap default/partial-a)")
+			s.True(exists("partial-a"))
+		})
+		s.Run("names the documents not attempted", func() {
+			s.Contains(text, "not attempted: document 3 (ConfigMap default/partial-c)")
+			s.False(exists("partial-c"))
+		})
+	})
+	s.Run("an unknown kind fails before anything is applied", func() {
+		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{
+			"resource": cm("unknown-kind-a") + "---\napiVersion: v1\nkind: NoSuchKind\nmetadata:\n  name: x\n",
+		})
+		s.Require().NoError(err)
+		s.True(result.IsError)
+		s.Contains(result.Content[0].(*mcp.TextContent).Text, "document 2 (NoSuchKind x)")
+		s.Contains(result.Content[0].(*mcp.TextContent).Text, "nothing was applied")
+		s.False(exists("unknown-kind-a"))
+	})
+}

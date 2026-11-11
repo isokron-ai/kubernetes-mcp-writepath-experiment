@@ -215,26 +215,128 @@ func (c *Core) resourcesListAsTable(ctx context.Context, gvk *schema.GroupVersio
 	return &unstructured.Unstructured{Object: unstructuredObject}, err
 }
 
+// ApplyOutcome names one document of a multi-document apply.
+type ApplyOutcome struct {
+	Index     int
+	Kind      string
+	Namespace string
+	Name      string
+}
+
+func (o ApplyOutcome) String() string {
+	ref := o.Name
+	if o.Namespace != "" {
+		ref = o.Namespace + "/" + o.Name
+	}
+	return fmt.Sprintf("document %d (%s %s)", o.Index, o.Kind, ref)
+}
+
+// PartialApplyError is returned when a multi-document apply fails after some
+// documents were already applied. Kubernetes has no multi-object
+// transaction, so those stay in place; the error names them, the document
+// that failed and the documents that were never sent.
+type PartialApplyError struct {
+	Total        int
+	Applied      []ApplyOutcome
+	Failed       ApplyOutcome
+	NotAttempted []ApplyOutcome
+	Err          error
+}
+
+func (e *PartialApplyError) Error() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s of %d failed: %v", e.Failed, e.Total, e.Err)
+	if len(e.Applied) > 0 {
+		b.WriteString("; already applied and left in place: ")
+		b.WriteString(joinOutcomes(e.Applied))
+	}
+	if len(e.NotAttempted) > 0 {
+		b.WriteString("; not attempted: ")
+		b.WriteString(joinOutcomes(e.NotAttempted))
+	}
+	return b.String()
+}
+
+func (e *PartialApplyError) Unwrap() error { return e.Err }
+
+func joinOutcomes(outcomes []ApplyOutcome) string {
+	parts := make([]string, len(outcomes))
+	for i, o := range outcomes {
+		parts[i] = o.String()
+	}
+	return strings.Join(parts, ", ")
+}
+
 func (c *Core) resourcesCreateOrUpdate(ctx context.Context, resources []*unstructured.Unstructured) ([]*unstructured.Unstructured, error) {
+	// Resolve every document's resource and namespace before the first write, so an
+	// unknown kind or apiVersion fails the call with nothing applied. A kind defined by a
+	// CustomResourceDefinition earlier in the same input cannot resolve yet; it is
+	// resolved after that CRD has been applied.
+	gvrs := make([]*schema.GroupVersionResource, len(resources))
+	namespaces := make([]string, len(resources))
+	outcomes := make([]ApplyOutcome, len(resources))
+	crdBefore := false
+	unresolved := func(i int, err error) error {
+		if len(resources) == 1 {
+			return err
+		}
+		return fmt.Errorf("%s: %w (nothing was applied)", outcomes[i], err)
+	}
 	for i, obj := range resources {
 		gvk := obj.GroupVersionKind()
-		gvr, rErr := c.resourceFor(&gvk)
-		if rErr != nil {
-			return nil, rErr
+		outcomes[i] = ApplyOutcome{Index: i + 1, Kind: gvk.Kind, Namespace: obj.GetNamespace(), Name: obj.GetName()}
+		gvr, err := c.resourceFor(&gvk)
+		if err != nil {
+			if crdBefore && meta.IsNoMatchError(err) {
+				continue
+			}
+			return nil, unresolved(i, err)
 		}
-
 		namespace, err := c.effectiveNamespace(&gvk, obj.GetNamespace())
 		if err != nil {
-			return nil, err
+			return nil, unresolved(i, err)
 		}
-		obj.SetNamespace(namespace)
-		resources[i], rErr = c.DynamicClient().Resource(*gvr).Namespace(namespace).Apply(ctx, obj.GetName(), obj, metav1.ApplyOptions{
+		gvrs[i], namespaces[i] = gvr, namespace
+		outcomes[i].Namespace = namespace
+		if gvk.Kind == "CustomResourceDefinition" {
+			crdBefore = true
+		}
+	}
+	partial := func(i int, err error) error {
+		if len(resources) == 1 {
+			return err
+		}
+		return &PartialApplyError{
+			Total:        len(resources),
+			Applied:      outcomes[:i],
+			Failed:       outcomes[i],
+			NotAttempted: outcomes[i+1:],
+			Err:          err,
+		}
+	}
+	for i, obj := range resources {
+		gvk := obj.GroupVersionKind()
+		if gvrs[i] == nil {
+			gvr, err := c.resourceFor(&gvk)
+			if err != nil {
+				return nil, partial(i, err)
+			}
+			namespace, err := c.effectiveNamespace(&gvk, obj.GetNamespace())
+			if err != nil {
+				return nil, partial(i, err)
+			}
+			gvrs[i], namespaces[i] = gvr, namespace
+			outcomes[i].Namespace = namespace
+		}
+		obj.SetNamespace(namespaces[i])
+		applied, err := c.DynamicClient().Resource(*gvrs[i]).Namespace(namespaces[i]).Apply(ctx, obj.GetName(), obj, metav1.ApplyOptions{
 			FieldManager: version.BinaryName,
 			Force:        true,
 		})
-		if rErr != nil {
-			return nil, rErr
+		if err != nil {
+			return nil, partial(i, err)
 		}
+		resources[i] = applied
 		// Clear the cache to ensure the next operation is performed on the latest exposed APIs (will change after the CRD creation)
 		if gvk.Kind == "CustomResourceDefinition" {
 			c.RESTMapper().Reset()
