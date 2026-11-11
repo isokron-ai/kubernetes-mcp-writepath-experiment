@@ -165,6 +165,21 @@ func (s *HelmSuite) TestHelmInstallWaitOptions() {
 	})
 }
 
+func (s *HelmSuite) TestHelmInstallIsAnnotatedDestructive() {
+	s.InitMcpClient()
+	tools, err := s.ListTools()
+	s.Require().NoError(err)
+	for _, tool := range tools.Tools {
+		if tool.Name == "helm_install" {
+			s.Require().NotNil(tool.Annotations.DestructiveHint)
+			s.True(*tool.Annotations.DestructiveHint)
+			s.False(tool.Annotations.IdempotentHint)
+			return
+		}
+	}
+	s.Fail("helm_install not listed")
+}
+
 func (s *HelmSuite) TestHelmInstallDenied() {
 	configtest.OverlayTOML(s.T(), &s.Cfg, `
 		denied_resources = [ { version = "v1", kind = "Secret" } ]

@@ -55,9 +55,12 @@ func initHelm() []api.ServerTool {
 				Required: []string{"chart"},
 			},
 			Annotations: api.ToolAnnotations{
-				Title:           "Helm: Install",
-				DestructiveHint: ptr.To(false),
-				IdempotentHint:  nil, // TODO: consider replacing implementation with equivalent to: helm upgrade --install
+				Title: "Helm: Install",
+				// A chart's hooks can delete or replace resources (helm.sh/hook-delete-policy), and
+				// rollback_on_failure uninstalls what the install created. Clients and confirmation
+				// rules that rely on this hint must see it.
+				DestructiveHint: ptr.To(true),
+				IdempotentHint:  ptr.To(false), // a second install with the same name fails; TODO: consider helm upgrade --install
 				OpenWorldHint:   ptr.To(true),
 			},
 		}, RBAC: api.RBACUnbounded("Permissions depend on resources contained in the referenced Helm chart"), Handler: helmInstall},
