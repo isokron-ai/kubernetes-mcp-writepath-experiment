@@ -446,7 +446,7 @@
     "inputSchema": {
       "properties": {
         "action": {
-          "description": "Lifecycle action to perform: 'restart' creates a new PipelineRun with the same spec; 'cancel' sets spec.status to Cancelled.",
+          "description": "Lifecycle action to perform: 'restart' creates a new PipelineRun with the same spec and the run's own labels and annotations; 'cancel' sets spec.status to Cancelled on a run that is still running (a finished run is reported and left unchanged).",
           "enum": [
             "restart",
             "cancel"

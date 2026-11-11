@@ -3,6 +3,7 @@ package tekton
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/containers/kubernetes-mcp-server/pkg/api"
 	"github.com/containers/kubernetes-mcp-server/pkg/kubernetes"
@@ -134,7 +135,7 @@ func pipelineRunLifecycleSchema() *jsonschema.Schema {
 			"action": {
 				Type:        "string",
 				Enum:        []any{string(pipelineRunActionRestart), string(pipelineRunActionCancel)},
-				Description: "Lifecycle action to perform: 'restart' creates a new PipelineRun with the same spec; 'cancel' sets spec.status to Cancelled.",
+				Description: "Lifecycle action to perform: 'restart' creates a new PipelineRun with the same spec and the run's own labels and annotations; 'cancel' sets spec.status to Cancelled on a run that is still running (a finished run is reported and left unchanged).",
 			},
 		},
 		Required: []string{"name", "action"},
@@ -154,11 +155,20 @@ func pipelineRunLifecycle(params api.ToolHandlerParams) (*api.ToolCallResult, er
 	case pipelineRunActionRestart:
 		return restartPipelineRun(params.Context, params.DynamicClient(), namespace, name)
 	case pipelineRunActionCancel:
+		// Read the run first: a finished run cannot be cancelled, and the answer should
+		// say what state the run is in rather than claim a cancellation.
+		current, err := params.DynamicClient().Resource(pipelineRunGVR).Namespace(namespace).Get(params.Context, name, metav1.GetOptions{})
+		if err != nil {
+			return api.NewToolCallResult("", fmt.Errorf("failed to cancel PipelineRun %s/%s: %w", namespace, name, err)), nil
+		}
+		if done, state := runFinished(current); done {
+			return api.NewToolCallResult(fmt.Sprintf("PipelineRun '%s' in namespace '%s' has already finished (%s); nothing was changed", name, namespace, state), nil), nil
+		}
 		patch := []byte(fmt.Sprintf(`{"spec":{"status":%q}}`, tektonv1.PipelineRunSpecStatusCancelled))
 		if _, err := params.DynamicClient().Resource(pipelineRunGVR).Namespace(namespace).Patch(params.Context, name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
 			return api.NewToolCallResult("", fmt.Errorf("failed to cancel PipelineRun %s/%s: %w", namespace, name, err)), nil
 		}
-		return api.NewToolCallResult(fmt.Sprintf("PipelineRun '%s' cancelled in namespace '%s'", name, namespace), nil), nil
+		return api.NewToolCallResult(fmt.Sprintf("PipelineRun '%s' in namespace '%s': cancellation requested (spec.status=Cancelled); Tekton stops its TaskRuns and then marks it Cancelled", name, namespace), nil), nil
 	default:
 		return api.NewToolCallResult("", fmt.Errorf("invalid action %q: must be one of %q or %q", action, pipelineRunActionRestart, pipelineRunActionCancel)), nil
 	}
@@ -184,6 +194,8 @@ func restartPipelineRun(ctx context.Context, dynamicClient dynamic.Interface, na
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace:    namespace,
 			GenerateName: name + "-",
+			Labels:       copyRunMetadata(existing.Labels),
+			Annotations:  copyRunMetadata(existing.Annotations),
 		},
 		Spec: existing.Spec,
 	}
@@ -275,4 +287,35 @@ func pipelineRunTaskRuns(ctx context.Context, dynamicClient dynamic.Interface, n
 		taskRuns = append(taskRuns, taskRun)
 	}
 	return taskRuns, list.GetContinue(), nil
+}
+
+// copyRunMetadata keeps the labels and annotations set on the run itself (for example
+// by Tekton Triggers or the user) for its restart. Tekton's own tekton.dev/ keys are left
+// out: Tekton sets them again from the Pipeline or Task. kubectl's last-applied
+// annotation is left out too.
+func copyRunMetadata(in map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, v := range in {
+		if strings.HasPrefix(k, "tekton.dev/") || k == "kubectl.kubernetes.io/last-applied-configuration" {
+			continue
+		}
+		out[k] = v
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// runFinished reports whether a PipelineRun or TaskRun has a Succeeded condition that
+// is True or False (finished), and the condition's reason.
+func runFinished(run *unstructured.Unstructured) (bool, string) {
+	conditions, _, _ := unstructured.NestedSlice(run.Object, "status", "conditions")
+	for _, c := range conditions {
+		m, _ := c.(map[string]any)
+		if m["type"] == "Succeeded" && (m["status"] == "True" || m["status"] == "False") {
+			return true, fmt.Sprintf("%v", m["reason"])
+		}
+	}
+	return false, ""
 }

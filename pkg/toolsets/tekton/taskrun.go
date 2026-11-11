@@ -143,6 +143,8 @@ func restartTaskRun(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace:    namespace,
 			GenerateName: name + "-",
+			Labels:       copyRunMetadata(existing.Labels),
+			Annotations:  copyRunMetadata(existing.Annotations),
 		},
 		Spec: existing.Spec,
 	}

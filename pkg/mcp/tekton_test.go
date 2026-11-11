@@ -75,7 +75,17 @@ func (s *TektonMcpSuite) TearDownTest() {
 
 func (s *TektonMcpSuite) TestPipelineRunLifecycle() {
 	s.Run("cancel", func() {
-		s.createPipelineRun("cancel-me")
+		// a running run: Succeeded is Unknown until it finishes (the shared fixture is a failed run)
+		_, err := s.dynamic.Resource(tektonTestPipelineRunGVR).Namespace(s.namespace).Create(s.T().Context(), &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "tekton.dev/v1",
+			"kind":       "PipelineRun",
+			"metadata":   map[string]interface{}{"name": "cancel-me", "namespace": s.namespace},
+			"spec":       map[string]interface{}{"pipelineRef": map[string]interface{}{"name": "demo-pipeline"}},
+			"status": map[string]interface{}{"conditions": []interface{}{map[string]interface{}{
+				"type": "Succeeded", "status": "Unknown", "reason": "Running",
+			}}},
+		}}, metav1.CreateOptions{})
+		s.Require().NoError(err)
 
 		toolResult, err := s.CallTool("tekton_pipelinerun_lifecycle", map[string]interface{}{
 			"namespace": s.namespace,
@@ -89,6 +99,46 @@ func (s *TektonMcpSuite) TestPipelineRunLifecycle() {
 		s.Require().NoError(err)
 		status, _, _ := unstructured.NestedString(pipelineRun.Object, "spec", "status")
 		s.Equal("Cancelled", status)
+	})
+
+	s.Run("cancel of a finished run changes nothing and says so", func() {
+		s.createPipelineRun("already-failed")
+		toolResult, err := s.CallTool("tekton_pipelinerun_lifecycle", map[string]interface{}{
+			"namespace": s.namespace, "name": "already-failed", "action": "cancel",
+		})
+		s.Require().NoError(err)
+		s.False(toolResult.IsError)
+		s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "has already finished (Failed); nothing was changed")
+		pipelineRun, err := s.dynamic.Resource(tektonTestPipelineRunGVR).Namespace(s.namespace).Get(s.T().Context(), "already-failed", metav1.GetOptions{})
+		s.Require().NoError(err)
+		status, _, _ := unstructured.NestedString(pipelineRun.Object, "spec", "status")
+		s.Empty(status)
+	})
+
+	s.Run("restart keeps the labels and annotations set on the run", func() {
+		s.createPipelineRun("restart-labelled")
+		original, err := s.dynamic.Resource(tektonTestPipelineRunGVR).Namespace(s.namespace).Get(s.T().Context(), "restart-labelled", metav1.GetOptions{})
+		s.Require().NoError(err)
+		original.SetLabels(map[string]string{"triggers.tekton.dev/eventlistener": "github", "tekton.dev/pipeline": "demo-pipeline"})
+		original.SetAnnotations(map[string]string{"team": "payments"})
+		_, err = s.dynamic.Resource(tektonTestPipelineRunGVR).Namespace(s.namespace).Update(s.T().Context(), original, metav1.UpdateOptions{})
+		s.Require().NoError(err)
+		toolResult, err := s.CallTool("tekton_pipelinerun_lifecycle", map[string]interface{}{
+			"namespace": s.namespace, "name": "restart-labelled", "action": "restart",
+		})
+		s.Require().NoError(err)
+		s.Require().False(toolResult.IsError)
+		list, err := s.dynamic.Resource(tektonTestPipelineRunGVR).Namespace(s.namespace).List(s.T().Context(), metav1.ListOptions{LabelSelector: "triggers.tekton.dev/eventlistener=github"})
+		s.Require().NoError(err)
+		var restarted *unstructured.Unstructured
+		for i := range list.Items {
+			if list.Items[i].GetName() != "restart-labelled" {
+				restarted = &list.Items[i]
+			}
+		}
+		s.Require().NotNil(restarted, "the restarted run must keep the run's own labels")
+		s.Equal("payments", restarted.GetAnnotations()["team"])
+		s.NotContains(restarted.GetLabels(), "tekton.dev/pipeline", "Tekton sets its own labels again")
 	})
 
 	s.Run("restart", func() {
