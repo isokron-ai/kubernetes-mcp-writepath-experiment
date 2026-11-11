@@ -267,6 +267,37 @@ func (s *PodsExecSuite) TestPodsExecNonZeroExit() {
 	})
 }
 
+func (s *PodsExecSuite) TestPodsExecReturnsStderrWithStdout() {
+	s.mockServer.Handle(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/api/v1/namespaces/default/pods/pod-to-exec/exec" {
+			return
+		}
+		var stdout, stderr bytes.Buffer
+		ctx, err := test.CreateHTTPStreams(w, req, &test.StreamOptions{Stdout: &stdout, Stderr: &stderr})
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		defer func() { _ = ctx.Close() }()
+		_, _ = io.WriteString(ctx.StdoutStream, "ok\n")
+		_, _ = io.WriteString(ctx.StderrStream, "warning: deprecated flag\n")
+	}))
+	s.mockServer.Handle(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/api/v1/namespaces/default/pods/pod-to-exec" {
+			return
+		}
+		test.WriteObject(w, &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "pod-to-exec"},
+			Spec:       v1.PodSpec{Containers: []v1.Container{{Name: "c"}}},
+		})
+	}))
+	s.InitMcpClient()
+	result, err := s.CallTool("pods_exec", map[string]interface{}{"name": "pod-to-exec", "namespace": "default", "command": []interface{}{"tool"}})
+	s.Require().NoError(err)
+	s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
+	s.Equal("ok\n--- stderr ---\nwarning: deprecated flag\n", result.Content[0].(*mcp.TextContent).Text)
+}
+
 func TestPodsExec(t *testing.T) {
 	suite.Run(t, new(PodsExecSuite))
 }

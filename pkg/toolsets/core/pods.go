@@ -535,15 +535,29 @@ func podsExec(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 		return api.NewToolCallResult("", fmt.Errorf("%w\n%s", err, execStreams(stdout, stderr))), nil
 	}
 
-	// Prefer stdout, fallback to stderr, or indicate no output
+	// stdout as before; stderr is no longer dropped when stdout is non-empty: it follows,
+	// labelled, so warnings and diagnostics reach the caller (exit code 0)
 	ret := stdout
-	if ret == "" && stderr != "" {
+	switch {
+	case stdout == "" && stderr != "":
 		ret = stderr
+	case stdout != "" && stderr != "":
+		if !strings.HasSuffix(ret, "\n") {
+			ret += "\n"
+		}
+		ret += execStreams("", stderr)
 	}
 	if ret == "" {
 		ret = fmt.Sprintf("The executed command in pod %s in namespace %s has not produced any output", name, ns)
 	}
 	return api.NewToolCallResult(ret, nil), nil
+}
+
+// kubeletLogFailure recognises the kubelet's "unable to retrieve container logs for
+// <runtime>://<id>" answer, which arrives as a 200 response body instead of an error.
+func kubeletLogFailure(log string) bool {
+	line := strings.TrimSpace(log)
+	return strings.HasPrefix(line, "unable to retrieve container logs for ") && !strings.Contains(line, "\n")
 }
 
 // execStreams renders captured stdout and stderr, labelled, for an exec error.
@@ -575,6 +589,14 @@ func podsLog(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 	ret, err := kubernetes.NewCore(params).PodsLog(params.Context, ns, name, container, previousBool, tailInt)
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to get pod %s log in namespace %s: %w", name, ns, err)), nil
+	} else if kubeletLogFailure(ret) {
+		// The kubelet answers 200 with this single line when it cannot read the log file
+		// (for example the previous container's log was rotated or removed).
+		hint := ""
+		if previousBool {
+			hint = "; the previous container's log is no longer available on the node"
+		}
+		return api.NewToolCallResult("", fmt.Errorf("failed to get pod %s log in namespace %s: %s%s", name, ns, strings.TrimSpace(ret), hint)), nil
 	} else if ret == "" {
 		ret = fmt.Sprintf("The pod %s in namespace %s has not logged any message yet", name, ns)
 	}
