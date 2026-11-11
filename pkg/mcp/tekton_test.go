@@ -974,7 +974,7 @@ func (s *TektonMcpSuite) TestStartRefusesWronglyTypedParams() {
 			s.Require().NoError(err)
 			s.Run("returns an error", func() {
 				s.True(result.IsError, "a wrongly typed params argument must not start a run without parameters")
-				s.Contains(result.Content[0].(*mcp.TextContent).Text, "params must be an object")
+				s.Contains(result.Content[0].(*mcp.TextContent).Text, "validating /properties/params: type")
 			})
 			s.Run("starts no run", func() {
 				runs := "taskruns"

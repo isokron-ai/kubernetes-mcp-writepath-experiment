@@ -150,7 +150,7 @@ func (s *KubevirtSuite) TestCreate() {
 		})
 		s.Require().NoError(err)
 		s.True(toolResult.IsError, "a wrongly typed networks argument must not create a VM without networks")
-		s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "networks must be an array")
+		s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "validating /properties/networks: type")
 	})
 	s.Run("vm_create with manifest text in workload", func() {
 		toolResult, err := s.CallTool("vm_create", map[string]interface{}{
@@ -567,7 +567,7 @@ func (s *KubevirtSuite) TestVMLifecycle() {
 		})
 		s.Require().Nilf(err, "call tool failed %v", err)
 		s.Truef(toolResult.IsError, "expected call tool to fail due to invalid action")
-		s.Truef(strings.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "invalid action"),
+		s.Truef(strings.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "validating /properties/action: enum"),
 			"Expected invalid action message, got %v", toolResult.Content[0].(*mcp.TextContent).Text)
 	})
 
@@ -1271,7 +1271,7 @@ func (s *KubevirtSuite) TestVMGuestInfo() {
 			})
 			s.Nilf(err, "call tool failed %v", err)
 			s.Truef(toolResult.IsError, "expected error for invalid info_type")
-			s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "invalid info_type")
+			s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "validating /properties/info_type: enum")
 		})
 
 		// Cleanup
@@ -1423,7 +1423,7 @@ func (s *KubevirtSuite) TestCreateFromTemplate() {
 		})
 		s.Nilf(err, "call tool failed %v", err)
 		s.Truef(toolResult.IsError, "expected call tool to fail for invalid parameter types")
-		s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "must be a string")
+		s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "want \"string\"")
 	})
 }
 

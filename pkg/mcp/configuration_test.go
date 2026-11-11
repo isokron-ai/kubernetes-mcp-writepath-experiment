@@ -148,7 +148,7 @@ func (s *ConfigurationSuite) TestConfigurationView() {
 		})
 		s.Nilf(err, "call tool should not return error object")
 		s.Truef(toolResult.IsError, "call tool should fail with type mismatch")
-		s.Equalf("failed to get configuration: minified parameter must be a boolean", toolResult.Content[0].(*mcp.TextContent).Text,
+		s.Containsf(toolResult.Content[0].(*mcp.TextContent).Text, "validating /properties/minified: type: false has type \"string\", want \"boolean\"",
 			"invalid error message, got %v", toolResult.Content[0].(*mcp.TextContent).Text)
 	})
 	s.Run("configuration_view(minified=false)", func() {

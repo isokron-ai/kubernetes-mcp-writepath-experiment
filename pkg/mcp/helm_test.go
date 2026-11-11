@@ -540,7 +540,7 @@ func (s *HelmSuite) TestHelmListPagination() {
 		toolResult, err := s.CallTool("helm_list", map[string]interface{}{"limit": -1})
 		s.Require().NoError(err)
 		s.True(toolResult.IsError)
-		s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "limit must be greater than or equal to 0")
+		s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "validating /properties/limit: minimum")
 	})
 }
 

@@ -851,7 +851,7 @@ func (s *ResourcesSuite) TestResourcesDelete() {
 	s.Run("resources_delete with invalid gracePeriodSeconds returns error", func() {
 		toolResult, _ := s.CallTool("resources_delete", map[string]interface{}{"apiVersion": "v1", "kind": "ConfigMap", "name": "a-configmap", "gracePeriodSeconds": "-5"})
 		s.Truef(toolResult.IsError, "call tool should fail")
-		s.Equalf("failed to delete resource, invalid argument gracePeriodSeconds", toolResult.Content[0].(*mcp.TextContent).Text,
+		s.Containsf(toolResult.Content[0].(*mcp.TextContent).Text, "validating /properties/gracePeriodSeconds: type",
 			"invalid error message, got %v", toolResult.Content[0].(*mcp.TextContent).Text)
 	})
 
@@ -1215,7 +1215,7 @@ func (s *ResourcesSuite) TestResourcesListPagination() {
 		})
 		s.Require().NoError(callErr)
 		s.True(result.IsError)
-		s.Contains(result.Content[0].(*mcp.TextContent).Text, "limit must be greater than or equal to 0")
+		s.Contains(result.Content[0].(*mcp.TextContent).Text, "validating /properties/limit: minimum")
 	})
 }
 
@@ -1305,7 +1305,7 @@ func (s *ResourcesSuite) TestAPIResourcesList() {
 		toolResult, err := s.CallTool("api_resources_list", map[string]interface{}{"kind": ""})
 		s.Nilf(err, "call tool failed %v", err)
 		s.Truef(toolResult.IsError, "expected an error for an empty kind filter, got: %v", toolResult.Content)
-		s.Containsf(toolResult.Content[0].(*mcp.TextContent).Text, "must not be empty",
+		s.Containsf(toolResult.Content[0].(*mcp.TextContent).Text, "validating /properties/kind: minLength",
 			"error message should reject an empty kind filter, got: %v", toolResult.Content[0].(*mcp.TextContent).Text)
 	})
 	s.Run("api_resources_list with a whitespace-only kind filter returns an error", func() {

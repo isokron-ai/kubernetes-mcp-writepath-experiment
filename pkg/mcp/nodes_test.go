@@ -180,11 +180,11 @@ func (s *NodesSuite) TestNodesLog() {
 					"expected log content '%s', got %v", expectedMessage, toolResult.Content[0].(*mcp.TextContent).Text)
 			})
 		})
-		s.Run("nodes_log(name=existing-node, query=/kubelet.log, tailLines=-1)", func() {
+		s.Run("nodes_log(name=existing-node, query=/kubelet.log, tailLines=0)", func() {
 			toolResult, err := s.CallTool("nodes_log", map[string]interface{}{
-				"name":  "existing-node",
-				"query": "/kubelet.log",
-				"tail":  -1,
+				"name":      "existing-node",
+				"query":     "/kubelet.log",
+				"tailLines": 0,
 			})
 			s.Require().NotNil(toolResult, "toolResult should not be nil")
 			s.Run("no error", func() {

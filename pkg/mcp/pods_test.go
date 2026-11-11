@@ -628,7 +628,7 @@ func (s *PodsSuite) TestPodsLog() {
 		})
 		s.Nilf(err, "call tool should not return error object")
 		s.Truef(toolResult.IsError, "call tool should fail with type mismatch")
-		s.Equalf("failed to get pod log: previous parameter must be a boolean", toolResult.Content[0].(*mcp.TextContent).Text,
+		s.Containsf(toolResult.Content[0].(*mcp.TextContent).Text, "validating /properties/previous: type",
 			"invalid error message, got %v", toolResult.Content[0].(*mcp.TextContent).Text)
 	})
 	s.Run("pods_log with previous as float64 returns error without panicking", func() {
@@ -639,7 +639,7 @@ func (s *PodsSuite) TestPodsLog() {
 		})
 		s.Nilf(err, "call tool should not return error object")
 		s.Truef(toolResult.IsError, "call tool should fail with type mismatch")
-		s.Equalf("failed to get pod log: previous parameter must be a boolean", toolResult.Content[0].(*mcp.TextContent).Text,
+		s.Containsf(toolResult.Content[0].(*mcp.TextContent).Text, "validating /properties/previous: type",
 			"invalid error message, got %v", toolResult.Content[0].(*mcp.TextContent).Text)
 	})
 	s.Run("pods_log(tail=50) returns pod log", func() {
@@ -658,7 +658,7 @@ func (s *PodsSuite) TestPodsLog() {
 			"tail":      "invalid",
 		})
 		s.Truef(podsInvalidTailLines.IsError, "call tool should fail")
-		expectedErrorMsg := "failed to get pod log: tail parameter must be an integer"
+		expectedErrorMsg := "validating /properties/tail: type: invalid has type \"string\", want \"integer\""
 		errMsg := podsInvalidTailLines.Content[0].(*mcp.TextContent).Text
 		s.Containsf(errMsg, expectedErrorMsg, "unexpected error message, expected to contain '%s', got '%s'", expectedErrorMsg, errMsg)
 	})

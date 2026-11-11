@@ -78,10 +78,17 @@ func ServerToolToGoSdkTool(s *Server, tool api.ServerTool) (*mcp.Tool, mcp.ToolH
 		}
 		goSdkTool.OutputSchema = outputSchema
 	}
+	validator, err := newArgumentValidator(inputSchema)
+	if err != nil {
+		return nil, nil, fmt.Errorf("tool %q: invalid input schema: %w", tool.Tool.Name, err)
+	}
 	goSdkHandler := func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		toolCallRequest, err := GoSdkToolCallRequestToToolCallRequest(request)
 		if err != nil {
 			return nil, fmt.Errorf("%v for tool %s", err, tool.Tool.Name)
+		}
+		if err := validator.validate(toolCallRequest.GetArguments()); err != nil {
+			return NewTextResult("", fmt.Errorf("%s: %w (nothing was done)", tool.Tool.Name, err)), nil
 		}
 		// Snapshot the live configuration once so a concurrent reload
 		// can't split Config and ListOutput across two configs.
