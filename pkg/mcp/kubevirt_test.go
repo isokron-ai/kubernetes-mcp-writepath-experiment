@@ -117,6 +117,30 @@ func (s *KubevirtSuite) TestCreate() {
 			s.Equal("Halted", test.FieldString(vm, "spec.runStrategy"), "invalid default runStrategy")
 		})
 	})
+	s.Run("vm_create with the name of an existing VirtualMachine", func() {
+		first, err := s.CallTool("vm_create", map[string]interface{}{"name": "test-vm-exists", "namespace": "default"})
+		s.Require().NoError(err)
+		s.Require().Falsef(first.IsError, "first call failed: %v", first.Content)
+		second, err := s.CallTool("vm_create", map[string]interface{}{
+			"name":      "test-vm-exists",
+			"namespace": "default",
+			"workload":  "ubuntu",
+			"autostart": true,
+		})
+		s.Require().NoError(err)
+		s.Run("returns an error naming the existing VM", func() {
+			s.True(second.IsError, "vm_create must not report success over an existing VM")
+			s.Contains(second.Content[0].(*mcp.TextContent).Text, "VirtualMachine default/test-vm-exists already exists")
+		})
+		s.Run("leaves the existing VM unchanged", func() {
+			dynamicClient := dynamic.NewForConfigOrDie(test.EnvTestRestConfig())
+			vm, getErr := dynamicClient.Resource(schema.GroupVersionResource{Group: "kubevirt.io", Version: "v1", Resource: "virtualmachines"}).
+				Namespace("default").Get(s.T().Context(), "test-vm-exists", metav1.GetOptions{})
+			s.Require().NoError(getErr)
+			s.Equal("Halted", test.FieldString(vm, "spec.runStrategy"))
+			s.Equal("quay.io/containerdisks/fedora:latest", test.FieldString(vm, "spec.template.spec.volumes[0].containerDisk.image"))
+		})
+	})
 	s.Run("vm_create(workload=ubuntu, instancetype=u1.medium) with instancetype", func() {
 		toolResult, err := s.CallTool("vm_create", map[string]interface{}{
 			"name":         "test-vm-2",

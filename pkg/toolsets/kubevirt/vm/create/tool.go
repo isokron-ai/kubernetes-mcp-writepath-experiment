@@ -12,6 +12,9 @@ import (
 	"github.com/containers/kubernetes-mcp-server/pkg/output"
 	"github.com/containers/kubernetes-mcp-server/pkg/toolsets/kubevirt/internal/defaults"
 	"github.com/google/jsonschema-go/jsonschema"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/utils/ptr"
 )
 
@@ -135,7 +138,7 @@ func Tools(inspector api.ClusterInspector) []api.ServerTool {
 					Namespace: &api.RBACNamespace{Argument: "namespace"},
 				},
 				api.RBACRequirement{
-					Verbs:        []string{"patch"},
+					Verbs:        []string{"get", "patch"},
 					Target:       api.RBACTarget{Resource: &api.RBACResourceTarget{APIGroup: "kubevirt.io", Resource: "virtualmachines"}},
 					Namespace:    &api.RBACNamespace{Argument: "namespace"},
 					ResourceName: &api.RBACResourceName{Argument: "name"},
@@ -179,6 +182,19 @@ func create(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 	}
 
 	dynamicClient := params.DynamicClient()
+
+	// vm_create only creates: applying over an existing VirtualMachine would replace its
+	// run strategy, disks and volumes and still report "created".
+	existing, err := dynamicClient.Resource(kubevirt.VirtualMachineGVR).Namespace(createParams.Namespace).
+		Get(params.Context, createParams.Name, metav1.GetOptions{})
+	if err == nil {
+		runStrategy, _, _ := unstructured.NestedString(existing.Object, "spec", "runStrategy")
+		return api.NewToolCallResult("", fmt.Errorf(
+			"VirtualMachine %s/%s already exists (uid %s, runStrategy %s); vm_create does not modify existing VMs: choose another name, or use vm_lifecycle or resources_create_or_update to change it",
+			createParams.Namespace, createParams.Name, existing.GetUID(), runStrategy)), nil
+	} else if !apierrors.IsNotFound(err) {
+		return api.NewToolCallResult("", fmt.Errorf("failed to check whether VirtualMachine %s/%s exists: %w", createParams.Namespace, createParams.Name, err)), nil
+	}
 
 	// Search for available DataSources
 	dataSources := kubevirt.SearchDataSources(params.Context, dynamicClient)
