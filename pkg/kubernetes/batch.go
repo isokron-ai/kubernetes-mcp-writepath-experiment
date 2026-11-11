@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -11,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/discovery"
 
 	"github.com/containers/kubernetes-mcp-server/pkg/version"
 )
@@ -56,4 +58,33 @@ func (c *Core) ResourcesLabel(ctx context.Context, gvk *schema.GroupVersionKind,
 		return nil, err
 	}
 	return c.DynamicClient().Resource(*gvr).Namespace(namespace).Patch(ctx, name, types.MergePatchType, body, metav1.PatchOptions{FieldManager: version.BinaryName})
+}
+
+// ListableKind is one kind ResourcesListableNamespacedKinds returns.
+type ListableKind struct {
+	APIVersion string
+	Kind       string
+}
+
+// ResourcesListableNamespacedKinds returns every namespaced kind (server-preferred
+// version) that supports list, except Events, which are noise for "what is in this
+// namespace" and have their own tool.
+func (c *Core) ResourcesListableNamespacedKinds(ctx context.Context) ([]ListableKind, error) {
+	lists, err := discovery.ServerPreferredNamespacedResources(c.RawDiscoveryClient())
+	var kinds []ListableKind
+	for _, list := range lists {
+		for _, r := range list.APIResources {
+			if strings.Contains(r.Name, "/") || r.Kind == "Event" || !slices.Contains(r.Verbs, "list") {
+				continue
+			}
+			kinds = append(kinds, ListableKind{APIVersion: list.GroupVersion, Kind: r.Kind})
+		}
+	}
+	slices.SortFunc(kinds, func(a, b ListableKind) int {
+		return strings.Compare(a.APIVersion+"/"+a.Kind, b.APIVersion+"/"+b.Kind)
+	})
+	if len(kinds) == 0 && err != nil {
+		return nil, err
+	}
+	return kinds, nil
 }

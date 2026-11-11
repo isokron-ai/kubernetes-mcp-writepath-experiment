@@ -1321,6 +1321,13 @@
           "description": "Optional parameter selecting which context to run the tool in. Defaults to fake-context if not set",
           "type": "string"
         },
+        "fields": {
+          "description": "Return only these fields, as dotted paths; [N] picks a list element and [*] every element, e.g. [\"spec.template.spec.containers[*].resources.limits\"].",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "kind": {
           "description": "kind of the resource (examples of valid kind are: Pod, Service, Deployment, Ingress)",
           "type": "string"
@@ -1329,6 +1336,13 @@
           "description": "Name of the resource",
           "type": "string"
         },
+        "names": {
+          "description": "Instead of name: read several objects of this kind in one call; each object's error is reported inline.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "namespace": {
           "description": "Optional Namespace to retrieve the namespaced resource from (ignored in case of cluster scoped resources). If not provided, will get resource from configured namespace",
           "type": "string"
@@ -1336,8 +1350,7 @@
       },
       "required": [
         "apiVersion",
-        "kind",
-        "name"
+        "kind"
       ],
       "type": "object"
     },
@@ -1463,6 +1476,10 @@
     "description": "List Kubernetes resources and objects in the current cluster by providing their apiVersion and kind and optionally the namespace and label selector. Use limit and continue to retrieve a large list one page at a time.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
     "inputSchema": {
       "properties": {
+        "all_kinds": {
+          "description": "Instead of apiVersion and kind: list every namespaced kind the cluster serves (except Events) in the given namespace, names only, leaving out kinds with no objects. Use it to see everything in a namespace, e.g. before or after a clean-up.",
+          "type": "boolean"
+        },
         "apiVersion": {
           "description": "apiVersion of the resources (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)",
           "type": "string"
@@ -1480,9 +1497,31 @@
           "pattern": "^[.\\-A-Za-z0-9]+([=!,]{1,2}[./\\-A-Za-z0-9]+)+$",
           "type": "string"
         },
+        "fields": {
+          "description": "Return only these fields of each object, as dotted paths; [N] picks a list element and [*] every element, e.g. [\"spec.replicas\", \"spec.template.spec.containers[*].image\"].",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "kind": {
           "description": "kind of the resources (examples of valid kind are: Pod, Service, Deployment, Ingress)",
           "type": "string"
+        },
+        "kinds": {
+          "description": "Instead of apiVersion and kind: list several kinds in one call, e.g. [{\"apiVersion\":\"apps/v1\",\"kind\":\"Deployment\"},{\"apiVersion\":\"v1\",\"kind\":\"Service\"}]. Returns the names per kind, with each kind's error inline.",
+          "items": {
+            "properties": {
+              "apiVersion": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
         },
         "labelSelector": {
           "description": "Optional Kubernetes label selector (e.g. 'app=myapp,env=prod' or 'app in (myapp,yourapp)'), use this option when you want to filter the resources by label",

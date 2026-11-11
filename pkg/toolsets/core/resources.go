@@ -64,6 +64,27 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
 						Description: "Optional Kubernetes field selector to filter resources by field values (e.g. 'status.phase=Running', 'metadata.name=myresource'). Supported fields vary by resource type. For Pods: metadata.name, metadata.namespace, spec.nodeName, spec.restartPolicy, spec.schedulerName, spec.serviceAccountName, status.phase (Pending/Running/Succeeded/Failed/Unknown), status.podIP, status.nominatedNodeName. See https://kubernetes.io/docs/concepts/overview/working-with-objects/field-selectors/",
 						Pattern:     REGEX_FIELDSELECTOR,
 					},
+					"kinds": {
+						Type:        "array",
+						Description: "Instead of apiVersion and kind: list several kinds in one call, e.g. [{\"apiVersion\":\"apps/v1\",\"kind\":\"Deployment\"},{\"apiVersion\":\"v1\",\"kind\":\"Service\"}]. Returns the names per kind, with each kind's error inline.",
+						Items: &jsonschema.Schema{
+							Type: "object",
+							Properties: map[string]*jsonschema.Schema{
+								"apiVersion": {Type: "string"},
+								"kind":       {Type: "string"},
+							},
+							Required: []string{},
+						},
+					},
+					"all_kinds": {
+						Type:        "boolean",
+						Description: "Instead of apiVersion and kind: list every namespaced kind the cluster serves (except Events) in the given namespace, names only, leaving out kinds with no objects. Use it to see everything in a namespace, e.g. before or after a clean-up.",
+					},
+					"fields": {
+						Type:        "array",
+						Items:       &jsonschema.Schema{Type: "string"},
+						Description: "Return only these fields of each object, as dotted paths; [N] picks a list element and [*] every element, e.g. [\"spec.replicas\", \"spec.template.spec.containers[*].image\"].",
+					},
 				}),
 				Required: []string{"apiVersion", "kind"},
 			},
@@ -104,8 +125,18 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
 						Type:        "string",
 						Description: "Name of the resource",
 					},
+					"names": {
+						Type:        "array",
+						Items:       &jsonschema.Schema{Type: "string"},
+						Description: "Instead of name: read several objects of this kind in one call; each object's error is reported inline.",
+					},
+					"fields": {
+						Type:        "array",
+						Items:       &jsonschema.Schema{Type: "string"},
+						Description: "Return only these fields, as dotted paths; [N] picks a list element and [*] every element, e.g. [\"spec.template.spec.containers[*].resources.limits\"].",
+					},
 				},
-				Required: []string{"apiVersion", "kind", "name"},
+				Required: []string{"apiVersion", "kind"},
 			},
 			Annotations: api.ToolAnnotations{
 				Title:           "Resources: Get",
@@ -474,6 +505,18 @@ func resourcesList(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 	if namespace == nil {
 		namespace = ""
 	}
+	allKinds, _ := params.GetArguments()["all_kinds"].(bool)
+	if _, hasKinds := params.GetArguments()["kinds"]; hasKinds || allKinds {
+		ns, ok := namespace.(string)
+		if !ok {
+			return api.NewToolCallResult("", fmt.Errorf("namespace is not a string")), nil
+		}
+		return resourcesListKinds(params, ns, allKinds)
+	}
+	fields, err := stringList(params.GetArguments(), "fields")
+	if err != nil {
+		return api.NewToolCallResult("", fmt.Errorf("failed to list resources: %w", err)), nil
+	}
 	labelSelector := params.GetArguments()["labelSelector"]
 	resourceListOptions := api.ListOptions{
 		AsTable: params.ListOutput.AsTable(),
@@ -507,6 +550,9 @@ func resourcesList(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 		return api.NewToolCallResult("", fmt.Errorf("namespace is not a string")), nil
 	}
 
+	if len(fields) > 0 {
+		return resourcesListFields(params, gvk, ns, resourceListOptions, fields)
+	}
 	ret, err := kubernetes.NewCore(params).ResourcesList(params, gvk, ns, resourceListOptions)
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to list resources: %w", ListErr(err))), nil
@@ -536,6 +582,30 @@ func resourcesGet(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 		return api.NewToolCallResult("", fmt.Errorf("failed to get resource, %s", err)), nil
 	}
 	name := params.GetArguments()["name"]
+	names, err := stringList(params.GetArguments(), "names")
+	if err != nil {
+		return api.NewToolCallResult("", fmt.Errorf("failed to get resources: %w", err)), nil
+	}
+	fields, err := stringList(params.GetArguments(), "fields")
+	if err != nil {
+		return api.NewToolCallResult("", fmt.Errorf("failed to get resources: %w", err)), nil
+	}
+	if len(names) > 0 || (name != nil && len(fields) > 0) {
+		ns, ok := namespace.(string)
+		if !ok {
+			return api.NewToolCallResult("", fmt.Errorf("namespace is not a string")), nil
+		}
+		if len(names) == 0 {
+			n, ok := name.(string)
+			if !ok {
+				return api.NewToolCallResult("", fmt.Errorf("name is not a string")), nil
+			}
+			names = []string{n}
+		} else if name != nil {
+			return api.NewToolCallResult("", errors.New("failed to get resources, pass either name or names, not both")), nil
+		}
+		return resourcesGetMany(params, gvk, ns, names, fields)
+	}
 	if name == nil {
 		return api.NewToolCallResult("", errors.New("failed to get resource, missing argument name")), nil
 	}
