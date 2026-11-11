@@ -1505,3 +1505,13 @@ func (s *ResourcesSuite) TestResourcesCreateOrUpdatePartialFailure() {
 		s.False(exists("unknown-kind-a"))
 	})
 }
+
+func (s *ResourcesSuite) TestResourcesCreateOrUpdateOmitsManagedFields() {
+	s.InitMcpClient()
+	result, err := s.CallTool("resources_create_or_update", map[string]interface{}{
+		"resource": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: a-cm-without-managed-fields\n  namespace: default\ndata:\n  key: value\n",
+	})
+	s.Require().NoError(err)
+	s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
+	s.NotContains(result.Content[0].(*mcp.TextContent).Text, "managedFields", "write results must omit managedFields like reads do")
+}
