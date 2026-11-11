@@ -1120,6 +1120,18 @@
           "description": "Optional parameter selecting which context to run the tool in. Defaults to fake-context if not set",
           "type": "string"
         },
+        "force": {
+          "description": "Take over fields that other field managers own (server-side apply force). Default false: if the manifest sets a field another writer owns, nothing is written and the error names the fields and their managers, so a concurrent change is not silently reverted.",
+          "type": "boolean"
+        },
+        "mode": {
+          "description": "'apply' (default) creates the object or updates the fields it sets. 'create' only creates: an existing object of the same name is left untouched and the error names it and its field managers.",
+          "enum": [
+            "apply",
+            "create"
+          ],
+          "type": "string"
+        },
         "output": {
           "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
           "enum": [

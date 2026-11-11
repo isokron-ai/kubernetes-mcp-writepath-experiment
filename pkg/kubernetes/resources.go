@@ -7,9 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 
@@ -21,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/dynamic"
 )
 
 const (
@@ -68,11 +72,27 @@ func (c *Core) ResourcesGet(ctx context.Context, gvk *schema.GroupVersionKind, n
 }
 
 func (c *Core) ResourcesCreateOrUpdate(ctx context.Context, resource string) ([]*unstructured.Unstructured, error) {
+	return c.ResourcesApply(ctx, resource, ApplyOptions{Force: true})
+}
+
+// ApplyOptions controls how ResourcesApply writes each document.
+type ApplyOptions struct {
+	// Force takes over fields owned by other field managers (server-side apply force).
+	// Without it, a field owned by another manager makes the API refuse the write with a
+	// conflict, which is returned as a FieldConflictError.
+	Force bool
+	// CreateOnly creates each object (POST) instead of applying it: an existing object of
+	// the same name is never modified, and the call fails with an AlreadyExistsError.
+	CreateOnly bool
+}
+
+// ResourcesApply parses a YAML or JSON manifest stream and writes every document.
+func (c *Core) ResourcesApply(ctx context.Context, resource string, opts ApplyOptions) ([]*unstructured.Unstructured, error) {
 	parsedResources, err := ParseManifests(resource)
 	if err != nil {
 		return nil, err
 	}
-	return c.resourcesCreateOrUpdate(ctx, parsedResources)
+	return c.resourcesApply(ctx, parsedResources, opts)
 }
 
 // ResourcesApplyObject server-side applies one object that the caller built as
@@ -292,6 +312,10 @@ func joinOutcomes(outcomes []ApplyOutcome) string {
 }
 
 func (c *Core) resourcesCreateOrUpdate(ctx context.Context, resources []*unstructured.Unstructured) ([]*unstructured.Unstructured, error) {
+	return c.resourcesApply(ctx, resources, ApplyOptions{Force: true})
+}
+
+func (c *Core) resourcesApply(ctx context.Context, resources []*unstructured.Unstructured, opts ApplyOptions) ([]*unstructured.Unstructured, error) {
 	// Resolve every document's resource and namespace before the first write, so an
 	// unknown kind or apiVersion fails the call with nothing applied. A kind defined by a
 	// CustomResourceDefinition earlier in the same input cannot resolve yet; it is
@@ -353,10 +377,23 @@ func (c *Core) resourcesCreateOrUpdate(ctx context.Context, resources []*unstruc
 			outcomes[i].Namespace = namespace
 		}
 		obj.SetNamespace(namespaces[i])
-		applied, err := c.DynamicClient().Resource(*gvrs[i]).Namespace(namespaces[i]).Apply(ctx, obj.GetName(), obj, metav1.ApplyOptions{
-			FieldManager: version.BinaryName,
-			Force:        true,
-		})
+		client := c.DynamicClient().Resource(*gvrs[i]).Namespace(namespaces[i])
+		var applied *unstructured.Unstructured
+		var err error
+		if opts.CreateOnly {
+			applied, err = client.Create(ctx, obj, metav1.CreateOptions{FieldManager: version.BinaryName})
+			if apierrors.IsAlreadyExists(err) {
+				err = c.alreadyExists(ctx, client, outcomes[i], err)
+			}
+		} else {
+			applied, err = client.Apply(ctx, obj.GetName(), obj, metav1.ApplyOptions{
+				FieldManager: version.BinaryName,
+				Force:        opts.Force,
+			})
+			if !opts.Force && apierrors.IsConflict(err) {
+				err = fieldConflict(outcomes[i], err)
+			}
+		}
 		if err != nil {
 			return nil, partial(i, err)
 		}
@@ -367,6 +404,84 @@ func (c *Core) resourcesCreateOrUpdate(ctx context.Context, resources []*unstruc
 		}
 	}
 	return resources, nil
+}
+
+// FieldConflictError is a server-side apply refused because fields in the manifest
+// are owned by other field managers (someone else set them since, or set them first).
+type FieldConflictError struct {
+	Object    ApplyOutcome
+	Conflicts []string // "<field> (manager <name>)"
+	Err       error
+}
+
+func (e *FieldConflictError) Error() string {
+	return fmt.Sprintf("%s was not applied: it sets fields owned by other field managers: %s. Send only the fields you mean to change "+
+		"(fields you leave out keep their values), re-reading the object first if needed, or pass force: true to take these fields over",
+		e.Object.ref(), strings.Join(e.Conflicts, "; "))
+}
+
+func (e *FieldConflictError) Unwrap() error { return e.Err }
+
+var conflictCause = regexp.MustCompile(`^conflict with "([^"]*)"`)
+
+func fieldConflict(o ApplyOutcome, err error) error {
+	var statusErr apierrors.APIStatus
+	if !errors.As(err, &statusErr) || statusErr.Status().Details == nil {
+		return err
+	}
+	var conflicts []string
+	for _, cause := range statusErr.Status().Details.Causes {
+		if cause.Type != metav1.CauseTypeFieldManagerConflict {
+			continue
+		}
+		manager := "unknown"
+		if m := conflictCause.FindStringSubmatch(cause.Message); m != nil {
+			manager = m[1]
+		}
+		conflicts = append(conflicts, fmt.Sprintf("%s (manager %s)", cause.Field, manager))
+	}
+	if len(conflicts) == 0 {
+		return err
+	}
+	return &FieldConflictError{Object: o, Conflicts: conflicts, Err: err}
+}
+
+// AlreadyExistsError is a create-only write refused because the object exists.
+type AlreadyExistsError struct {
+	Object   ApplyOutcome
+	Managers []string
+	Err      error
+}
+
+func (e *AlreadyExistsError) Error() string {
+	owners := ""
+	if len(e.Managers) > 0 {
+		owners = " (its fields are managed by " + strings.Join(e.Managers, ", ") + ")"
+	}
+	return fmt.Sprintf("%s already exists%s and was not modified (mode: create): choose another name, or apply over it with mode: apply", e.Object.ref(), owners)
+}
+
+func (e *AlreadyExistsError) Unwrap() error { return e.Err }
+
+func (c *Core) alreadyExists(ctx context.Context, client dynamic.ResourceInterface, o ApplyOutcome, err error) error {
+	existing, getErr := client.Get(ctx, o.Name, metav1.GetOptions{})
+	var managers []string
+	if getErr == nil {
+		for _, mf := range existing.GetManagedFields() {
+			if !slices.Contains(managers, mf.Manager) {
+				managers = append(managers, mf.Manager)
+			}
+		}
+	}
+	return &AlreadyExistsError{Object: o, Managers: managers, Err: err}
+}
+
+func (o ApplyOutcome) ref() string {
+	ref := o.Name
+	if o.Namespace != "" {
+		ref = o.Namespace + "/" + o.Name
+	}
+	return o.Kind + " " + ref
 }
 
 // APIResourceInfo describes one Kubernetes API resource type registered on

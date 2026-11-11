@@ -716,9 +716,9 @@ func (s *ResourcesSuite) TestResourcesCreateOrUpdateForcesSSA() {
 		s.Require().NoError(err, "failed to create ConfigMap with other-manager")
 
 		// Use resources_create_or_update to update the same field owned by "other-manager"
-		// Without Force: true, this would fail with a conflict error
+		// Without force: true, this fails with a conflict error (see TestResourcesCreateOrUpdateFieldConflicts)
 		updatedCmYaml := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm-force-ssa-test\n  namespace: default\ndata:\n  key: updated-value\n"
-		toolResult, err := s.CallTool("resources_create_or_update", map[string]interface{}{"resource": updatedCmYaml})
+		toolResult, err := s.CallTool("resources_create_or_update", map[string]interface{}{"resource": updatedCmYaml, "force": true})
 		s.Nilf(err, "call tool failed %v", err)
 		s.Falsef(toolResult.IsError, "call tool should not fail, got: %v", toolResult.Content)
 
@@ -1463,6 +1463,71 @@ func (s *ResourcesSuite) TestResourcesScaleStatesTheChange() {
 		replicas, found, _ := unstructured.NestedInt64(decoded.Object, "spec", "replicas")
 		s.True(found, "spec.replicas must be present even when it is 0")
 		s.Equal(int64(0), replicas)
+	})
+}
+
+func (s *ResourcesSuite) TestResourcesCreateOrUpdateFieldConflicts() {
+	s.InitMcpClient()
+	dynamicClient := dynamic.NewForConfigOrDie(test.EnvTestRestConfig())
+	cmResource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}
+	other := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata":   map[string]interface{}{"name": "cm-conflict-test", "namespace": "default"},
+		"data":       map[string]interface{}{"MAX_CONNECTIONS": "200", "LOG_LEVEL": "info"},
+	}}
+	_, err := dynamicClient.Resource(cmResource).Namespace("default").Apply(
+		s.T().Context(), "cm-conflict-test", other, metav1.ApplyOptions{FieldManager: "other-writer"})
+	s.Require().NoError(err)
+	stale := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm-conflict-test\n  namespace: default\ndata:\n  MAX_CONNECTIONS: \"100\"\n  LOG_LEVEL: debug\n"
+	s.Run("a stale full copy is refused by default", func() {
+		toolResult, err := s.CallTool("resources_create_or_update", map[string]interface{}{"resource": stale})
+		s.Require().NoError(err)
+		s.True(toolResult.IsError, "a write over another manager's fields must not succeed silently")
+		text := toolResult.Content[0].(*mcp.TextContent).Text
+		s.Contains(text, "ConfigMap default/cm-conflict-test was not applied")
+		s.Contains(text, ".data.MAX_CONNECTIONS (manager other-writer)")
+		current, getErr := dynamicClient.Resource(cmResource).Namespace("default").Get(s.T().Context(), "cm-conflict-test", metav1.GetOptions{})
+		s.Require().NoError(getErr)
+		value, _, _ := unstructured.NestedString(current.Object, "data", "MAX_CONNECTIONS")
+		s.Equal("200", value, "the other writer's value must be kept")
+	})
+	s.Run("a minimal manifest with only the changed field succeeds", func() {
+		toolResult, err := s.CallTool("resources_create_or_update", map[string]interface{}{
+			"resource": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm-conflict-test\n  namespace: default\ndata:\n  DEBUG_PORT: \"9000\"\n",
+		})
+		s.Require().NoError(err)
+		s.Falsef(toolResult.IsError, "call tool failed: %v", toolResult.Content)
+	})
+}
+
+func (s *ResourcesSuite) TestResourcesCreateOrUpdateCreateOnly() {
+	s.InitMcpClient()
+	client := kubernetes.NewForConfigOrDie(test.EnvTestRestConfig())
+	_, err := client.CoreV1().ConfigMaps("default").Create(s.T().Context(), &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "feature-flags-taken"},
+		Data:       map[string]string{"checkout": "off"},
+	}, metav1.CreateOptions{FieldManager: "team-b"})
+	s.Require().NoError(err)
+	s.Run("mode: create refuses an existing object and leaves it untouched", func() {
+		toolResult, err := s.CallTool("resources_create_or_update", map[string]interface{}{
+			"resource": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: feature-flags-taken\n  namespace: default\ndata:\n  checkout: \"on\"\n",
+			"mode":     "create",
+		})
+		s.Require().NoError(err)
+		s.True(toolResult.IsError)
+		s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "ConfigMap default/feature-flags-taken already exists (its fields are managed by team-b)")
+		cm, getErr := client.CoreV1().ConfigMaps("default").Get(s.T().Context(), "feature-flags-taken", metav1.GetOptions{})
+		s.Require().NoError(getErr)
+		s.Equal("off", cm.Data["checkout"])
+	})
+	s.Run("mode: create creates a new object", func() {
+		toolResult, err := s.CallTool("resources_create_or_update", map[string]interface{}{
+			"resource": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: feature-flags-free\n  namespace: default\n",
+			"mode":     "create",
+		})
+		s.Require().NoError(err)
+		s.Falsef(toolResult.IsError, "call tool failed: %v", toolResult.Content)
 	})
 }
 

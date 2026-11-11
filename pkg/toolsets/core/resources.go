@@ -133,6 +133,15 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
 						Description: "Complete YAML or JSON representation of the Kubernetes resource (full desired state, not a partial patch). Include apiVersion, kind, metadata, and the full spec.",
 					},
 					"output": outputProperty,
+					"force": {
+						Type:        "boolean",
+						Description: "Take over fields that other field managers own (server-side apply force). Default false: if the manifest sets a field another writer owns, nothing is written and the error names the fields and their managers, so a concurrent change is not silently reverted.",
+					},
+					"mode": {
+						Type:        "string",
+						Enum:        []any{"apply", "create"},
+						Description: "'apply' (default) creates the object or updates the fields it sets. 'create' only creates: an existing object of the same name is left untouched and the error names it and its field managers.",
+					},
 				},
 				Required: []string{"resource"},
 			},
@@ -431,7 +440,20 @@ func resourcesCreateOrUpdate(params api.ToolHandlerParams) (*api.ToolCallResult,
 		return api.NewToolCallResult("", fmt.Errorf("failed to create or update resources: %w", err)), nil
 	}
 
-	resources, err := kubernetes.NewCore(params).ResourcesCreateOrUpdate(params, r)
+	p := api.WrapParams(params)
+	opts := kubernetes.ApplyOptions{Force: p.OptionalBool("force", false)}
+	switch mode := p.OptionalString("mode", "apply"); mode {
+	case "apply":
+	case "create":
+		opts.CreateOnly = true
+	default:
+		return api.NewToolCallResult("", fmt.Errorf("failed to create or update resources: mode must be \"apply\" or \"create\", got %q", mode)), nil
+	}
+	if err := p.Err(); err != nil {
+		return api.NewToolCallResult("", fmt.Errorf("failed to create or update resources: %w", err)), nil
+	}
+
+	resources, err := kubernetes.NewCore(params).ResourcesApply(params, r, opts)
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to create or update resources: %w", err)), nil
 	}
