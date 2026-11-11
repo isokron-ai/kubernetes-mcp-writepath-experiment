@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -164,6 +165,48 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
 			Verbs:  []string{"create", "patch"},
 			Target: api.RBACTarget{Manifest: &api.RBACManifestTarget{Argument: "resource"}},
 		}), Handler: resourcesCreateOrUpdate},
+		{Tool: api.Tool{
+			Name: "resources_patch",
+			Description: "Patch one Kubernetes resource, like kubectl patch: change, add or remove individual fields without sending the whole object. " +
+				"Use it for one-field edits, to remove a label, annotation or finalizer, or to delete a map key that another tool or person set (server-side apply cannot remove fields it does not own). " +
+				"Pass resourceVersion (from a read) to make the patch fail instead of overwriting a change made since.\n" + commonApiVersion,
+			InputSchema: &jsonschema.Schema{
+				Type: "object",
+				Properties: map[string]*jsonschema.Schema{
+					"apiVersion": {Type: "string", Description: "apiVersion of the resource (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)"},
+					"kind":       {Type: "string", Description: "kind of the resource (examples of valid kind are: Pod, Service, Deployment, Ingress)"},
+					"namespace":  {Type: "string", Description: "Optional Namespace of the resource (ignored for cluster scoped resources). If not provided, the configured namespace is used"},
+					"name":       {Type: "string", Description: "Name of the resource"},
+					"patchType": {
+						Type: "string",
+						Enum: []any{"merge", "strategic", "json"},
+						Description: "'merge' (JSON merge patch, RFC 7386: an object; null removes a key), 'strategic' (built-in kinds only: merges lists by key, e.g. containers by name), " +
+							"'json' (JSON patch, RFC 6902: an array of operations such as {\"op\":\"remove\",\"path\":\"/metadata/finalizers\"})",
+					},
+					"patch": {Type: "string", Description: "The patch, as JSON or YAML"},
+					"resourceVersion": {
+						Type:        "string",
+						Description: "Optional precondition: the metadata.resourceVersion you read. The patch is refused with a conflict if the object has changed since.",
+					},
+					"output": outputProperty,
+				},
+				Required: []string{"apiVersion", "kind", "name", "patchType", "patch"},
+			},
+			Annotations: api.ToolAnnotations{
+				Title:           "Resources: Patch",
+				DestructiveHint: ptr.To(true),
+				IdempotentHint:  ptr.To(false),
+				OpenWorldHint:   ptr.To(true),
+			},
+		}, RBAC: api.RBACBounded(api.RBACRequirement{
+			Verbs: []string{"patch"},
+			Target: api.RBACTarget{GVK: &api.RBACGVKTarget{
+				APIVersionArgument: "apiVersion",
+				KindArgument:       "kind",
+			}},
+			Namespace:    &api.RBACNamespace{Argument: "namespace"},
+			ResourceName: &api.RBACResourceName{Argument: "name"},
+		}), Handler: resourcesPatch},
 		{Tool: api.Tool{
 			Name:        "resources_delete",
 			Description: "Delete a Kubernetes resource in the current cluster by providing its apiVersion, kind, optionally the namespace, and its name\n" + commonApiVersion,
@@ -489,6 +532,35 @@ func resourcesCreateOrUpdate(params api.ToolHandlerParams) (*api.ToolCallResult,
 		return api.NewToolCallResult("# Dry run (server-side, dryRun=All): every document was accepted; nothing was written\n"+note+marshalledYaml, err), nil
 	}
 	return api.NewToolCallResult("# The following resources (YAML) have been created or updated successfully\n"+note+marshalledYaml, err), nil
+}
+
+func resourcesPatch(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+	gvk, err := parseGroupVersionKind(params.GetArguments())
+	if err != nil {
+		return api.NewToolCallResult("", fmt.Errorf("failed to patch resource, %s", err)), nil
+	}
+	p := api.WrapParams(params)
+	ns := p.OptionalString("namespace", "")
+	name := p.RequiredString("name")
+	patchType := p.RequiredString("patchType")
+	patch := p.RequiredString("patch")
+	resourceVersion := p.OptionalString("resourceVersion", "")
+	full, outputErr := wantFullOutput(p)
+	if err := errors.Join(p.Err(), outputErr); err != nil {
+		return api.NewToolCallResult("", fmt.Errorf("failed to patch resource: %w", err)), nil
+	}
+	patched, err := kubernetes.NewCore(params).ResourcesPatch(params, gvk, ns, name, patchType, patch, resourceVersion)
+	if err != nil {
+		if resourceVersion != "" && apierrors.IsConflict(err) {
+			err = fmt.Errorf("%w (the object changed after resourceVersion %s was read: read it again and rebuild the patch)", err, resourceVersion)
+		}
+		return api.NewToolCallResult("", fmt.Errorf("failed to patch resource: %w", err)), nil
+	}
+	text, err := writeResultYaml([]*unstructured.Unstructured{patched}, full)
+	if err != nil {
+		return api.NewToolCallResult("", fmt.Errorf("failed to patch resource: %w", err)), nil
+	}
+	return api.NewToolCallResult(fmt.Sprintf("# %s %s patched (%s patch)\n", gvk.Kind, name, patchType)+text, nil), nil
 }
 
 func resourcesDelete(params api.ToolHandlerParams) (*api.ToolCallResult, error) {

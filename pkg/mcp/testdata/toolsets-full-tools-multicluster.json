@@ -1399,6 +1399,101 @@
               "target": {
                 "gvk": {
                   "apiVersionArgument": "apiVersion",
+                  "kindArgument": "kind"
+                }
+              },
+              "verbs": [
+                "patch"
+              ]
+            }
+          ]
+        },
+        "version": "v1alpha1"
+      }
+    },
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": false,
+      "title": "Resources: Patch"
+    },
+    "description": "Patch one Kubernetes resource, like kubectl patch: change, add or remove individual fields without sending the whole object. Use it for one-field edits, to remove a label, annotation or finalizer, or to delete a map key that another tool or person set (server-side apply cannot remove fields it does not own). Pass resourceVersion (from a read) to make the patch fail instead of overwriting a change made since.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
+    "inputSchema": {
+      "properties": {
+        "apiVersion": {
+          "description": "apiVersion of the resource (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)",
+          "type": "string"
+        },
+        "context": {
+          "description": "Optional parameter selecting which context to run the tool in. Defaults to fake-context if not set",
+          "type": "string"
+        },
+        "kind": {
+          "description": "kind of the resource (examples of valid kind are: Pod, Service, Deployment, Ingress)",
+          "type": "string"
+        },
+        "name": {
+          "description": "Name of the resource",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "Optional Namespace of the resource (ignored for cluster scoped resources). If not provided, the configured namespace is used",
+          "type": "string"
+        },
+        "output": {
+          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
+          "enum": [
+            "receipt",
+            "full"
+          ],
+          "type": "string"
+        },
+        "patch": {
+          "description": "The patch, as JSON or YAML",
+          "type": "string"
+        },
+        "patchType": {
+          "description": "'merge' (JSON merge patch, RFC 7386: an object; null removes a key), 'strategic' (built-in kinds only: merges lists by key, e.g. containers by name), 'json' (JSON patch, RFC 6902: an array of operations such as {\"op\":\"remove\",\"path\":\"/metadata/finalizers\"})",
+          "enum": [
+            "merge",
+            "strategic",
+            "json"
+          ],
+          "type": "string"
+        },
+        "resourceVersion": {
+          "description": "Optional precondition: the metadata.resourceVersion you read. The patch is refused with a conflict if the object has changed since.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "name",
+        "patchType",
+        "patch"
+      ],
+      "type": "object"
+    },
+    "name": "resources_patch",
+    "title": "Resources: Patch"
+  },
+  {
+    "_meta": {
+      "io.kubernetes-mcp-server/rbac": {
+        "bounded": {
+          "requirements": [
+            {
+              "namespace": {
+                "argument": "namespace"
+              },
+              "resourceName": {
+                "argument": "name"
+              },
+              "target": {
+                "gvk": {
+                  "apiVersionArgument": "apiVersion",
                   "kindArgument": "kind",
                   "subresource": "scale"
                 }
