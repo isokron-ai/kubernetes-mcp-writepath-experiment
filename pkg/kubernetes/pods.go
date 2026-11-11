@@ -284,6 +284,27 @@ func (c *Core) PodsRun(ctx context.Context, namespace, name, image string, port 
 		}
 		toCreate = append(toCreate, u)
 	}
+	// pods_run creates its Pod, Service and Route; it re-applies them only if a previous
+	// pods_run call created them. An existing object of the same name that it did not
+	// create is never taken over (the apply is forced, so it would replace the object's
+	// fields, such as a Service's type and selector). Checked before the first write.
+	for _, u := range toCreate {
+		gvk := u.GroupVersionKind()
+		gvr, err := c.resourceFor(&gvk)
+		if err != nil {
+			return nil, err
+		}
+		existing, err := c.DynamicClient().Resource(*gvr).Namespace(u.GetNamespace()).Get(ctx, u.GetName(), metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to check for an existing %s %s/%s: %w", gvk.Kind, u.GetNamespace(), u.GetName(), err)
+		}
+		if existing.GetLabels()[AppKubernetesManagedBy] != version.BinaryName || existing.GetLabels()[AppKubernetesName] != name {
+			return nil, fmt.Errorf("%s %s/%s already exists and was not created by pods_run; nothing was created or changed: choose another name", gvk.Kind, u.GetNamespace(), u.GetName())
+		}
+	}
 	return c.resourcesCreateOrUpdate(ctx, toCreate)
 }
 

@@ -336,23 +336,25 @@ func initPods(inspector api.ClusterInspector) []api.ServerTool {
 				Required: []string{"image"},
 			},
 			Annotations: api.ToolAnnotations{
-				Title:           "Pods: Run",
-				DestructiveHint: ptr.To(false),
+				Title: "Pods: Run",
+				// Re-running pods_run with the same name force-applies over the Pod, Service and
+				// Route an earlier call created, replacing their fields.
+				DestructiveHint: ptr.To(true),
 				OpenWorldHint:   ptr.To(true),
 			},
 		}, RBAC: api.RBACBounded(
 			api.RBACRequirement{
-				Verbs:     []string{"create", "patch"},
+				Verbs:     []string{"get", "create", "patch"},
 				Target:    api.RBACTarget{Resource: &api.RBACResourceTarget{Resource: "pods"}},
 				Namespace: &api.RBACNamespace{Argument: "namespace"},
 			},
 			api.RBACRequirement{
-				Verbs:     []string{"create", "patch"},
+				Verbs:     []string{"get", "create", "patch"},
 				Target:    api.RBACTarget{Resource: &api.RBACResourceTarget{Resource: "services"}},
 				Namespace: &api.RBACNamespace{Argument: "namespace"},
 			},
 			api.RBACRequirement{
-				Verbs: []string{"create", "patch"},
+				Verbs: []string{"get", "create", "patch"},
 				Target: api.RBACTarget{Resource: &api.RBACResourceTarget{
 					APIGroup: "route.openshift.io",
 					Resource: "routes",

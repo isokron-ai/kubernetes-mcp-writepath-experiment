@@ -8,7 +8,12 @@ import (
 	"github.com/containers/kubernetes-mcp-server/pkg/config/configtest"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/suite"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/yaml"
 )
 
@@ -95,6 +100,59 @@ func (s *PodsRunSuite) TestPodsRun() {
 			s.Equal("kubernetes-mcp-server-run-sandbox", selectorMap["app.kubernetes.io/part-of"], "invalid service selector, expected app.kubernetes.io/part-of")
 		})
 	})
+}
+
+func (s *PodsRunSuite) TestPodsRunDoesNotTakeOverExistingService() {
+	s.InitMcpClient()
+	client := kubernetes.NewForConfigOrDie(test.EnvTestRestConfig())
+	_, err := client.CoreV1().Services("default").Create(s.T().Context(), &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "someone-elses-svc"},
+		Spec: corev1.ServiceSpec{
+			Type:     corev1.ServiceTypeNodePort,
+			Selector: map[string]string{"app": "theirs"},
+			Ports:    []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt32(8080)}},
+		},
+	}, metav1.CreateOptions{})
+	s.Require().NoError(err)
+	toolResult, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "name": "someone-elses-svc", "port": 80})
+	s.Require().NoError(err)
+	s.Run("returns an error naming the Service", func() {
+		s.True(toolResult.IsError)
+		s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "Service default/someone-elses-svc already exists and was not created by pods_run")
+	})
+	s.Run("leaves the Service unchanged", func() {
+		svc, getErr := client.CoreV1().Services("default").Get(s.T().Context(), "someone-elses-svc", metav1.GetOptions{})
+		s.Require().NoError(getErr)
+		s.Equal(corev1.ServiceTypeNodePort, svc.Spec.Type)
+		s.Equal(map[string]string{"app": "theirs"}, svc.Spec.Selector)
+	})
+	s.Run("creates no Pod", func() {
+		_, getErr := client.CoreV1().Pods("default").Get(s.T().Context(), "someone-elses-svc", metav1.GetOptions{})
+		s.True(apierrors.IsNotFound(getErr))
+	})
+}
+
+func (s *PodsRunSuite) TestPodsRunRerunKeepsWorking() {
+	s.InitMcpClient()
+	for i := 0; i < 2; i++ {
+		toolResult, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "name": "rerun-pod", "port": 80})
+		s.Require().NoError(err)
+		s.Falsef(toolResult.IsError, "call %d failed: %v", i+1, toolResult.Content)
+	}
+}
+
+func (s *PodsRunSuite) TestPodsRunIsAnnotatedDestructive() {
+	s.InitMcpClient()
+	tools, err := s.ListTools()
+	s.Require().NoError(err)
+	for _, tool := range tools.Tools {
+		if tool.Name == "pods_run" {
+			s.Require().NotNil(tool.Annotations.DestructiveHint)
+			s.True(*tool.Annotations.DestructiveHint, "pods_run re-applies over existing objects and must be hidden by disable_destructive")
+			return
+		}
+	}
+	s.Fail("pods_run not listed")
 }
 
 func (s *PodsRunSuite) TestPodsRunDenied() {

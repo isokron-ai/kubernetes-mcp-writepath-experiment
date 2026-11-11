@@ -875,6 +875,7 @@
                 }
               },
               "verbs": [
+                "get",
                 "create",
                 "patch"
               ]
@@ -889,6 +890,7 @@
                 }
               },
               "verbs": [
+                "get",
                 "create",
                 "patch"
               ]
@@ -904,6 +906,7 @@
                 }
               },
               "verbs": [
+                "get",
                 "create",
                 "patch"
               ]
@@ -914,7 +917,7 @@
       }
     },
     "annotations": {
-      "destructiveHint": false,
+      "destructiveHint": true,
       "idempotentHint": false,
       "openWorldHint": true,
       "readOnlyHint": false,
