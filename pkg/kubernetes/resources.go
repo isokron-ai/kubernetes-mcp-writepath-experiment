@@ -74,6 +74,17 @@ func (c *Core) ResourcesCreateOrUpdate(ctx context.Context, resource string) ([]
 	return c.resourcesCreateOrUpdate(ctx, parsedResources)
 }
 
+// ResourcesApplyObject server-side applies one object that the caller built as
+// data, without parsing any manifest text, so that tool arguments placed in its
+// fields cannot add documents to the apply.
+func (c *Core) ResourcesApplyObject(ctx context.Context, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	applied, err := c.resourcesCreateOrUpdate(ctx, []*unstructured.Unstructured{obj})
+	if err != nil {
+		return nil, err
+	}
+	return applied[0], nil
+}
+
 // ParseManifests splits a YAML or JSON stream into Kubernetes objects the way
 // kubectl's YAML reader does: a document separator is a line starting with
 // "---", optionally followed by spaces and a comment, and documents that hold

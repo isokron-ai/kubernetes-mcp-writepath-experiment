@@ -1,6 +1,7 @@
 package create
 
 import (
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -110,45 +111,47 @@ func (s *CreateToolSuite) TestParseNetworks() {
 	})
 }
 
-func (s *CreateToolSuite) TestRenderVMYaml() {
+func (s *CreateToolSuite) TestBuildVM() {
+	field := func(obj *unstructured.Unstructured, path ...string) any {
+		v, _, _ := unstructured.NestedFieldNoCopy(obj.Object, path...)
+		return v
+	}
 	s.Run("VM without networks", func() {
-		params := vmParams{
+		vm := buildVM(vmParams{
 			Namespace:     "test-ns",
 			Name:          "test-vm",
 			ContainerDisk: "quay.io/containerdisks/fedora:latest",
 			RunStrategy:   "Halted",
-		}
-		yaml, err := renderVMYaml(params)
-		s.NoError(err)
-		s.Contains(yaml, "name: test-vm")
-		s.Contains(yaml, "namespace: test-ns")
-		s.Contains(yaml, "runStrategy: Halted")
-		s.Contains(yaml, "image: quay.io/containerdisks/fedora:latest")
-		s.NotContains(yaml, "networks:")
-		s.NotContains(yaml, "interfaces:")
+		})
+		s.Equal("VirtualMachine", vm.GetKind())
+		s.Equal("kubevirt.io/v1", vm.GetAPIVersion())
+		s.Equal("test-vm", vm.GetName())
+		s.Equal("test-ns", vm.GetNamespace())
+		s.Equal("Halted", field(vm, "spec", "runStrategy"))
+		s.Equal([]any{map[string]any{"name": "test-vm-rootdisk", "containerDisk": map[string]any{"image": "quay.io/containerdisks/fedora:latest"}}},
+			field(vm, "spec", "template", "spec", "volumes"))
+		s.Equal("2Gi", field(vm, "spec", "template", "spec", "domain", "memory", "guest"))
+		s.Nil(field(vm, "spec", "template", "spec", "networks"))
+		s.Nil(field(vm, "spec", "template", "spec", "domain", "devices", "interfaces"))
 	})
 
-	s.Run("VM with single network", func() {
-		params := vmParams{
-			Namespace:     "test-ns",
-			Name:          "test-vm",
-			ContainerDisk: "quay.io/containerdisks/fedora:latest",
-			RunStrategy:   "Halted",
-			Networks: []NetworkConfig{
-				{Name: "vlan-network", NetworkName: "vlan-network"},
-			},
-		}
-		yaml, err := renderVMYaml(params)
-		s.NoError(err)
-		s.Contains(yaml, "networks:")
-		s.Contains(yaml, "- name: vlan-network")
-		s.Contains(yaml, "networkName: vlan-network")
-		s.Contains(yaml, "interfaces:")
-		s.Contains(yaml, "bridge: {}")
+	s.Run("VM with instancetype, preference and DataSource", func() {
+		vm := buildVM(vmParams{
+			Namespace: "test-ns", Name: "test-vm", RunStrategy: "Always", Storage: "50Gi",
+			Instancetype: "u1.medium", InstancetypeKind: "VirtualMachineClusterInstancetype",
+			Preference: "fedora", PreferenceKind: "VirtualMachineClusterPreference",
+			UseDataSource: true, DataSourceName: "fedora", DataSourceNamespace: "os-images",
+		})
+		s.Equal(map[string]any{"name": "u1.medium", "kind": "VirtualMachineClusterInstancetype"}, field(vm, "spec", "instancetype"))
+		s.Equal(map[string]any{"name": "fedora", "kind": "VirtualMachineClusterPreference"}, field(vm, "spec", "preference"))
+		s.Nil(field(vm, "spec", "template", "spec", "domain", "memory"), "an instancetype sets the memory")
+		s.Equal("50Gi", field(vm, "spec", "dataVolumeTemplates").([]any)[0].(map[string]any)["spec"].(map[string]any)["storage"].(map[string]any)["resources"].(map[string]any)["requests"].(map[string]any)["storage"])
+		s.Equal(map[string]any{"name": "test-vm-rootdisk", "dataVolume": map[string]any{"name": "test-vm-rootdisk"}},
+			field(vm, "spec", "template", "spec", "volumes").([]any)[0])
 	})
 
-	s.Run("VM with multiple networks", func() {
-		params := vmParams{
+	s.Run("VM with networks", func() {
+		vm := buildVM(vmParams{
 			Namespace:     "test-ns",
 			Name:          "test-vm",
 			ContainerDisk: "quay.io/containerdisks/fedora:latest",
@@ -157,13 +160,22 @@ func (s *CreateToolSuite) TestRenderVMYaml() {
 				{Name: "vlan100", NetworkName: "vlan-network"},
 				{Name: "storage", NetworkName: "storage-network"},
 			},
-		}
-		yaml, err := renderVMYaml(params)
-		s.NoError(err)
-		s.Contains(yaml, "- name: vlan100")
-		s.Contains(yaml, "networkName: vlan-network")
-		s.Contains(yaml, "- name: storage")
-		s.Contains(yaml, "networkName: storage-network")
+		})
+		s.Equal([]any{
+			map[string]any{"name": "vlan100", "bridge": map[string]any{}},
+			map[string]any{"name": "storage", "bridge": map[string]any{}},
+		}, field(vm, "spec", "template", "spec", "domain", "devices", "interfaces"))
+		s.Equal([]any{
+			map[string]any{"name": "vlan100", "multus": map[string]any{"networkName": "vlan-network"}},
+			map[string]any{"name": "storage", "multus": map[string]any{"networkName": "storage-network"}},
+		}, field(vm, "spec", "template", "spec", "networks"))
+	})
+
+	s.Run("argument text stays a field value", func() {
+		value := "quay.io/x:1\n---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: extra\n"
+		vm := buildVM(vmParams{Namespace: "test-ns", Name: "test-vm", ContainerDisk: value, RunStrategy: "Halted"})
+		s.Equal(value, field(vm, "spec", "template", "spec", "volumes").([]any)[0].(map[string]any)["containerDisk"].(map[string]any)["image"])
+		s.Equal("VirtualMachine", vm.GetKind())
 	})
 }
 

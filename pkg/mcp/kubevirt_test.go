@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -150,6 +151,25 @@ func (s *KubevirtSuite) TestCreate() {
 		s.Require().NoError(err)
 		s.True(toolResult.IsError, "a wrongly typed networks argument must not create a VM without networks")
 		s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "networks must be an array")
+	})
+	s.Run("vm_create with manifest text in workload", func() {
+		toolResult, err := s.CallTool("vm_create", map[string]interface{}{
+			"name":      "test-vm-workload-text",
+			"namespace": "default",
+			"workload":  "quay.io/containerdisks/fedora:latest\n---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: not-a-vm\n  namespace: default\n",
+		})
+		s.Require().NoError(err)
+		s.Run("returns an error", func() {
+			s.True(toolResult.IsError)
+			s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "invalid workload parameter")
+		})
+		s.Run("creates nothing", func() {
+			_, cmErr := kubernetes.NewForConfigOrDie(test.EnvTestRestConfig()).CoreV1().ConfigMaps("default").Get(s.T().Context(), "not-a-vm", metav1.GetOptions{})
+			s.Truef(apierrors.IsNotFound(cmErr), "no object other than the VirtualMachine may be created")
+			_, vmErr := dynamic.NewForConfigOrDie(test.EnvTestRestConfig()).Resource(schema.GroupVersionResource{Group: "kubevirt.io", Version: "v1", Resource: "virtualmachines"}).
+				Namespace("default").Get(s.T().Context(), "test-vm-workload-text", metav1.GetOptions{})
+			s.True(apierrors.IsNotFound(vmErr))
+		})
 	})
 	s.Run("vm_create(workload=ubuntu, instancetype=u1.medium) with instancetype", func() {
 		toolResult, err := s.CallTool("vm_create", map[string]interface{}{

@@ -1,10 +1,8 @@
 package create
 
 import (
-	_ "embed"
 	"fmt"
 	"strings"
-	"text/template"
 
 	"github.com/containers/kubernetes-mcp-server/pkg/api"
 	"github.com/containers/kubernetes-mcp-server/pkg/kubernetes"
@@ -17,9 +15,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/utils/ptr"
 )
-
-//go:embed vm.yaml.tmpl
-var vmYamlTemplate string
 
 func Tools(inspector api.ClusterInspector) []api.ServerTool {
 	return []api.ServerTool{
@@ -212,20 +207,19 @@ func create(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 	// Resolve instancetype from DataSource defaults or size/performance hints
 	instancetypeInfo := kubevirt.ResolveInstancetype(instancetypes, createParams.Instancetype, createParams.Size, createParams.Performance, matchedDataSource)
 
-	// Build template parameters from resolved resources
+	// Build the VM parameters from resolved resources
 	templateParams := buildTemplateParams(createParams, matchedDataSource, instancetypeInfo, preferenceInfo)
 
-	// Render the VM YAML
-	vmYaml, err := renderVMYaml(templateParams)
-	if err != nil {
-		return api.NewToolCallResult("", err), nil
-	}
+	// Build the VirtualMachine as data and apply exactly that one object: no argument
+	// is ever parsed as manifest text.
+	vm := buildVM(templateParams)
 
 	// Create the VM in the cluster
-	resources, err := kubernetes.NewCore(params).ResourcesCreateOrUpdate(params, vmYaml)
+	created, err := kubernetes.NewCore(params).ResourcesApplyObject(params, vm)
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to create VirtualMachine: %w", err)), nil
 	}
+	resources := []*unstructured.Unstructured{created}
 
 	// Format the output
 	marshalledYaml, err := output.MarshalYaml(resources)
@@ -264,6 +258,10 @@ func parseCreateParameters(params api.ToolHandlerParams) (*createParameters, err
 	autostart := p.OptionalBool("autostart", false)
 	if err := p.Err(); err != nil {
 		return nil, err
+	}
+
+	if strings.IndexFunc(workload, func(r rune) bool { return r <= ' ' || r == 0x7f }) >= 0 {
+		return nil, fmt.Errorf("invalid workload parameter: an OS name or container image reference cannot contain whitespace or control characters")
 	}
 
 	rawNetworks, err := optionalArray(params, "networks")
@@ -398,19 +396,66 @@ func buildTemplateParams(createParams *createParameters, matchedDataSource *kube
 	return params
 }
 
-// renderVMYaml renders the VM YAML from template
-func renderVMYaml(templateParams vmParams) (string, error) {
-	tmpl, err := template.New("vm").Parse(vmYamlTemplate)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse template: %w", err)
+// buildVM builds the VirtualMachine object from its parameters. Every argument
+// ends up as a scalar field value, so no argument can add fields or documents.
+func buildVM(p vmParams) *unstructured.Unstructured {
+	rootDisk := p.Name + "-rootdisk"
+	spec := map[string]any{
+		"runStrategy": p.RunStrategy,
 	}
-
-	var result strings.Builder
-	if err := tmpl.Execute(&result, templateParams); err != nil {
-		return "", fmt.Errorf("failed to render template: %w", err)
+	if p.Instancetype != "" {
+		spec["instancetype"] = map[string]any{"name": p.Instancetype, "kind": p.InstancetypeKind}
 	}
-
-	return result.String(), nil
+	if p.Preference != "" {
+		spec["preference"] = map[string]any{"name": p.Preference, "kind": p.PreferenceKind}
+	}
+	if p.UseDataSource {
+		spec["dataVolumeTemplates"] = []any{map[string]any{
+			"metadata": map[string]any{"name": rootDisk},
+			"spec": map[string]any{
+				"sourceRef": map[string]any{
+					"kind":      "DataSource",
+					"name":      p.DataSourceName,
+					"namespace": p.DataSourceNamespace,
+				},
+				"storage": map[string]any{
+					"resources": map[string]any{"requests": map[string]any{"storage": p.Storage}},
+				},
+			},
+		}}
+	}
+	devices := map[string]any{
+		"disks": []any{map[string]any{"name": rootDisk}},
+	}
+	domain := map[string]any{"devices": devices}
+	if p.Instancetype == "" {
+		domain["memory"] = map[string]any{"guest": "2Gi"}
+	}
+	templateSpec := map[string]any{"domain": domain}
+	if len(p.Networks) > 0 {
+		interfaces := make([]any, 0, len(p.Networks))
+		networks := make([]any, 0, len(p.Networks))
+		for _, n := range p.Networks {
+			interfaces = append(interfaces, map[string]any{"name": n.Name, "bridge": map[string]any{}})
+			networks = append(networks, map[string]any{"name": n.Name, "multus": map[string]any{"networkName": n.NetworkName}})
+		}
+		devices["interfaces"] = interfaces
+		templateSpec["networks"] = networks
+	}
+	volume := map[string]any{"name": rootDisk}
+	if p.UseDataSource {
+		volume["dataVolume"] = map[string]any{"name": rootDisk}
+	} else {
+		volume["containerDisk"] = map[string]any{"image": p.ContainerDisk}
+	}
+	templateSpec["volumes"] = []any{volume}
+	spec["template"] = map[string]any{"spec": templateSpec}
+	return &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "kubevirt.io/v1",
+		"kind":       "VirtualMachine",
+		"metadata":   map[string]any{"name": p.Name, "namespace": p.Namespace},
+		"spec":       spec,
+	}}
 }
 
 func normalizePerformance(performance string) string {
