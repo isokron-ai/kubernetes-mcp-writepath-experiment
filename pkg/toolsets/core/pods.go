@@ -332,6 +332,7 @@ func initPods(inspector api.ClusterInspector) []api.ServerTool {
 						Type:        "number",
 						Description: "TCP/IP port to expose from the Pod container, 1-65535 (Optional, no port exposed if not provided)",
 					},
+					"output": outputProperty,
 				},
 				Required: []string{"image"},
 			},
@@ -577,13 +578,21 @@ func podsRun(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 		return api.NewToolCallResult("", fmt.Errorf("failed to run pod: port must be between 1 and 65535, got %d", portValue)), nil
 	}
 	port := int32(portValue)
+	full, err := wantFullOutput(p)
+	if err != nil {
+		return api.NewToolCallResult("", fmt.Errorf("failed to run pod: %w", err)), nil
+	}
 	resources, err := kubernetes.NewCore(params).PodsRun(params, ns, name, image, port)
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to run pod %s in namespace %s: %w", name, ns, err)), nil
 	}
-	marshalledYaml, err := output.MarshalYaml(resources)
+	marshalledYaml, err := writeResultYaml(resources, full)
 	if err != nil {
 		err = fmt.Errorf("failed to run pod: %w", err)
 	}
-	return api.NewToolCallResult("# The following resources (YAML) have been created or updated successfully\n"+marshalledYaml, err), nil
+	note := receiptNote
+	if full {
+		note = ""
+	}
+	return api.NewToolCallResult("# The following resources (YAML) have been created or updated successfully\n"+note+marshalledYaml, err), nil
 }

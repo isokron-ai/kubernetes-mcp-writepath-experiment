@@ -38,7 +38,7 @@ func (s *PodsRunSuite) TestPodsRun() {
 		}
 	})
 	s.Run("pods_run(image=nginx, namespace=nil), uses configured namespace", func() {
-		podsRunNilNamespace, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx"})
+		podsRunNilNamespace, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "output": "full"})
 		s.Run("no error", func() {
 			s.Nilf(err, "call tool failed %v", err)
 			s.Falsef(podsRunNilNamespace.IsError, "call tool failed")
@@ -71,7 +71,7 @@ func (s *PodsRunSuite) TestPodsRun() {
 		})
 	})
 	s.Run("pods_run(image=nginx, namespace=nil, port=80)", func() {
-		podsRunNamespaceAndPort, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "port": 80})
+		podsRunNamespaceAndPort, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "port": 80, "output": "full"})
 		s.Run("no error", func() {
 			s.Nilf(err, "call tool failed %v", err)
 			s.Falsef(podsRunNamespaceAndPort.IsError, "call tool failed")
@@ -155,6 +155,26 @@ func (s *PodsRunSuite) TestPodsRunIsAnnotatedDestructive() {
 	s.Fail("pods_run not listed")
 }
 
+func (s *PodsRunSuite) TestPodsRunReturnsReceiptByDefault() {
+	s.InitMcpClient()
+	toolResult, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "name": "receipt-pod", "port": 80})
+	s.Require().NoError(err)
+	s.Require().Falsef(toolResult.IsError, "call tool failed: %v", toolResult.Content)
+	text := toolResult.Content[0].(*mcp.TextContent).Text
+	var decoded []unstructured.Unstructured
+	s.Require().NoError(yaml.Unmarshal([]byte(text), &decoded))
+	s.Run("names each object with its uid and resourceVersion", func() {
+		s.Require().Len(decoded, 2)
+		s.Equal("receipt-pod", decoded[0].GetName())
+		s.NotEmpty(decoded[0].GetUID())
+		s.NotEmpty(decoded[0].GetResourceVersion())
+	})
+	s.Run("carries no spec or status", func() {
+		s.NotContains(text, "spec:")
+		s.NotContains(text, "status:")
+	})
+}
+
 func (s *PodsRunSuite) TestPodsRunDenied() {
 	configtest.OverlayTOML(s.T(), &s.Cfg, `
 		denied_resources = [ { version = "v1", kind = "Pod" } ]
@@ -184,7 +204,7 @@ func (s *PodsRunSuite) TestPodsRunInOpenShift() {
 	s.InitMcpClient()
 
 	s.Run("pods_run(image=nginx, namespace=nil, port=80) returns route with port", func() {
-		podsRunInOpenShift, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "port": 80})
+		podsRunInOpenShift, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "port": 80, "output": "full"})
 		s.Run("no error", func() {
 			s.Nilf(err, "call tool failed %v", err)
 			s.Falsef(podsRunInOpenShift.IsError, "call tool failed")

@@ -1405,6 +1405,67 @@ func findAPIResourceByKind(resources []apiResourceEntry, kind string) *apiResour
 	return nil
 }
 
+func (s *ResourcesSuite) TestResourcesWriteReceipts() {
+	s.InitMcpClient()
+	cm := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: a-cm-receipt\n  namespace: default\ndata:\n  big: " + strings.Repeat("x", 200) + "\n"
+	s.Run("resources_create_or_update returns a receipt by default", func() {
+		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{"resource": cm})
+		s.Require().NoError(err)
+		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
+		text := result.Content[0].(*mcp.TextContent).Text
+		var decoded []unstructured.Unstructured
+		s.Require().NoError(yaml.Unmarshal([]byte(text), &decoded))
+		s.Require().Len(decoded, 1)
+		s.Equal("a-cm-receipt", decoded[0].GetName())
+		s.NotEmpty(decoded[0].GetResourceVersion())
+		s.NotContains(text, "xxxx", "a receipt carries no data")
+	})
+	s.Run("resources_create_or_update with output: full returns the object", func() {
+		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{"resource": cm, "output": "full"})
+		s.Require().NoError(err)
+		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
+		s.Contains(result.Content[0].(*mcp.TextContent).Text, strings.Repeat("x", 200))
+	})
+	s.Run("an unknown output value is refused", func() {
+		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{"resource": cm, "output": "everything"})
+		s.Require().NoError(err)
+		s.True(result.IsError)
+	})
+}
+
+func (s *ResourcesSuite) TestResourcesScaleStatesTheChange() {
+	s.InitMcpClient()
+	kc := kubernetes.NewForConfigOrDie(test.EnvTestRestConfig())
+	_, err := kc.AppsV1().Deployments("default").Create(s.T().Context(), &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "deployment-to-scale-to-zero"},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: ptr.To(int32(1)),
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "zero"}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "zero"}},
+				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "nginx"}}},
+			},
+		},
+	}, metav1.CreateOptions{})
+	s.Require().NoError(err)
+	result, err := s.CallTool("resources_scale", map[string]interface{}{
+		"apiVersion": "apps/v1", "kind": "Deployment", "namespace": "default", "name": "deployment-to-scale-to-zero", "scale": 0,
+	})
+	s.Require().NoError(err)
+	s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
+	text := result.Content[0].(*mcp.TextContent).Text
+	s.Run("states the change from and to", func() {
+		s.Contains(text, "Deployment default/deployment-to-scale-to-zero scaled: spec.replicas 1 -> 0")
+	})
+	s.Run("shows spec.replicas 0 explicitly", func() {
+		var decoded unstructured.Unstructured
+		s.Require().NoError(yaml.Unmarshal([]byte(text), &decoded))
+		replicas, found, _ := unstructured.NestedInt64(decoded.Object, "spec", "replicas")
+		s.True(found, "spec.replicas must be present even when it is 0")
+		s.Equal(int64(0), replicas)
+	})
+}
+
 func TestResources(t *testing.T) {
 	suite.Run(t, new(ResourcesSuite))
 }

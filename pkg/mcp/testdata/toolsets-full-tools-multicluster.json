@@ -942,6 +942,14 @@
           "description": "Namespace to run the Pod in",
           "type": "string"
         },
+        "output": {
+          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
+          "enum": [
+            "receipt",
+            "full"
+          ],
+          "type": "string"
+        },
         "port": {
           "description": "TCP/IP port to expose from the Pod container, 1-65535 (Optional, no port exposed if not provided)",
           "type": "number"
@@ -1110,6 +1118,14 @@
       "properties": {
         "context": {
           "description": "Optional parameter selecting which context to run the tool in. Defaults to fake-context if not set",
+          "type": "string"
+        },
+        "output": {
+          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
+          "enum": [
+            "receipt",
+            "full"
+          ],
           "type": "string"
         },
         "resource": {
@@ -1401,6 +1417,14 @@
         },
         "namespace": {
           "description": "Optional Namespace to get/update the namespaced resource scale from (ignored in case of cluster scoped resources). If not provided, will get/update resource scale from configured namespace",
+          "type": "string"
+        },
+        "output": {
+          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
+          "enum": [
+            "receipt",
+            "full"
+          ],
           "type": "string"
         },
         "scale": {

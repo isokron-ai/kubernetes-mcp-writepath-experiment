@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -165,6 +166,11 @@ func (c *Core) ResourcesScale(
 	if err != nil {
 		return nil, err
 	}
+	// spec.replicas is omitted from the API's answer when it is 0; record it explicitly,
+	// with the value before any change, so callers can state the change.
+	previous, _, _ := unstructured.NestedInt64(scale.Object, "spec", "replicas")
+	_ = unstructured.SetNestedField(scale.Object, previous, "spec", "replicas")
+	scale.SetAnnotations(nil)
 
 	if shouldScale {
 		if err := unstructured.SetNestedField(scale.Object, desiredScale, "spec", "replicas"); err != nil {
@@ -175,10 +181,16 @@ func (c *Core) ResourcesScale(
 		if err != nil {
 			return scale, fmt.Errorf("failed to update scale: %w", err)
 		}
+		_ = unstructured.SetNestedField(scale.Object, desiredScale, "spec", "replicas")
+		scale.SetAnnotations(map[string]string{ScalePreviousReplicasAnnotation: strconv.FormatInt(previous, 10)})
 	}
 
 	return scale, nil
 }
+
+// ScalePreviousReplicasAnnotation is set (in the returned object only, never on the
+// cluster) by ResourcesScale on a changed Scale to the replicas before the change.
+const ScalePreviousReplicasAnnotation = "kubernetes-mcp-server/previous-replicas"
 
 // resourcesListAsTable retrieves a list of resources in a table format.
 // It's almost identical to the dynamic.DynamicClient implementation, but it uses a specific Accept header to request the table format.

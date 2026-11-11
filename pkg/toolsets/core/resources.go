@@ -132,6 +132,7 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
 						Type:        "string",
 						Description: "Complete YAML or JSON representation of the Kubernetes resource (full desired state, not a partial patch). Include apiVersion, kind, metadata, and the full spec.",
 					},
+					"output": outputProperty,
 				},
 				Required: []string{"resource"},
 			},
@@ -215,6 +216,7 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
 						Type:        "integer",
 						Description: "Optional scale to update the resources scale to. If not provided, will return the current scale of the resource, and not update it",
 					},
+					"output": outputProperty,
 				},
 				Required: []string{"apiVersion", "kind", "name"},
 			},
@@ -424,15 +426,24 @@ func resourcesCreateOrUpdate(params api.ToolHandlerParams) (*api.ToolCallResult,
 		return api.NewToolCallResult("", fmt.Errorf("resource is not a string")), nil
 	}
 
+	full, err := wantFullOutput(api.WrapParams(params))
+	if err != nil {
+		return api.NewToolCallResult("", fmt.Errorf("failed to create or update resources: %w", err)), nil
+	}
+
 	resources, err := kubernetes.NewCore(params).ResourcesCreateOrUpdate(params, r)
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to create or update resources: %w", err)), nil
 	}
-	marshalledYaml, err := output.MarshalYaml(resources)
+	marshalledYaml, err := writeResultYaml(resources, full)
 	if err != nil {
 		err = fmt.Errorf("failed to create or update resources: %w", err)
 	}
-	return api.NewToolCallResult("# The following resources (YAML) have been created or updated successfully\n"+marshalledYaml, err), nil
+	note := receiptNote
+	if full {
+		note = ""
+	}
+	return api.NewToolCallResult("# The following resources (YAML) have been created or updated successfully\n"+note+marshalledYaml, err), nil
 }
 
 func resourcesDelete(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
@@ -510,17 +521,22 @@ func resourcesScale(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 		}
 	}
 
+	full, err := wantFullOutput(api.WrapParams(params))
+	if err != nil {
+		return api.NewToolCallResult("", fmt.Errorf("failed to get/update resource scale: %w", err)), nil
+	}
+
 	scale, err := kubernetes.NewCore(params).ResourcesScale(params.Context, gvk, ns, n, desiredScale, shouldScale)
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to get/update resource scale: %w", err)), nil
 	}
 
-	marshalled, err := output.MarshalYaml(scale)
+	text, err := scaleResultText(gvk, scale, full)
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to marshall scale to yaml format: %v", scale)), nil
 	}
 
-	return api.NewToolCallResult("# Current resource scale (YAML) is below\n"+marshalled, err), nil
+	return api.NewToolCallResult(text, nil), nil
 }
 
 func parseScaleValue(desiredScale interface{}) (int64, error) {
