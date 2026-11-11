@@ -34,6 +34,7 @@ func (t *Toolset) GetTools(ctx context.Context, toolsetContext api.ToolsetContex
 		initNodes(toolsetContext.Inspector),
 		initPods(toolsetContext.Inspector),
 		initResources(ctx, toolsetContext.Inspector, toolsetContext.TargetCompatibilityFiltersEnabled),
+		initRollout(),
 	)
 }
 

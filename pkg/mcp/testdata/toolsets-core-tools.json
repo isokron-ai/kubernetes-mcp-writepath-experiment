@@ -1602,6 +1602,96 @@
                 "argument": "namespace"
               },
               "target": {
+                "resource": {
+                  "apiGroup": "apps",
+                  "resource": "deployments"
+                }
+              },
+              "verbs": [
+                "get",
+                "patch"
+              ]
+            },
+            {
+              "namespace": {
+                "argument": "namespace"
+              },
+              "target": {
+                "resource": {
+                  "apiGroup": "apps",
+                  "resource": "replicasets"
+                }
+              },
+              "verbs": [
+                "list"
+              ]
+            }
+          ]
+        },
+        "version": "v1alpha1"
+      }
+    },
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": false,
+      "title": "Resources: Rollout"
+    },
+    "description": "Manage the rollout of a Deployment, StatefulSet or DaemonSet, like kubectl rollout: 'restart' restarts its Pods (rolling, by updating the Pod template's restartedAt annotation); 'undo' rolls a Deployment back to the previous revision, or to to_revision, by restoring that revision's Pod template; 'status' says whether the rollout is complete (updated, ready and available replicas, conditions).",
+    "inputSchema": {
+      "properties": {
+        "action": {
+          "description": "restart, undo or status",
+          "enum": [
+            "restart",
+            "undo",
+            "status"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "description": "Kind of the workload (apps/v1)",
+          "enum": [
+            "Deployment",
+            "StatefulSet",
+            "DaemonSet"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "description": "Name of the workload",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "Namespace of the workload (configured namespace if not provided)",
+          "type": "string"
+        },
+        "to_revision": {
+          "description": "undo only: the revision to roll back to (default: the previous one)",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "action",
+        "kind",
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "resources_rollout",
+    "title": "Resources: Rollout"
+  },
+  {
+    "_meta": {
+      "io.kubernetes-mcp-server/rbac": {
+        "bounded": {
+          "requirements": [
+            {
+              "namespace": {
+                "argument": "namespace"
+              },
+              "target": {
                 "gvk": {
                   "apiVersionArgument": "apiVersion",
                   "kindArgument": "kind"
