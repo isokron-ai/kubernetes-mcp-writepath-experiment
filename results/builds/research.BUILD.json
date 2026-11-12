@@ -1,0 +1,168 @@
+{
+  "name": "research",
+  "repo": "https://github.com/containers/kubernetes-mcp-server.git",
+  "tag": "v0.1.2",
+  "commit": "66553fed5c16454e5814b41e331b4357f15806d8",
+  "patches": [
+    {
+      "file": "experiment-patches/bugfix/01-K8S-06-15-fix-core-split-multi-document-manifests-like-kubectl.patch",
+      "sha256": "b604a3b7fab436a0f0c017c0d46152247a5e67e9239daf8a1be0f235a844e8e5"
+    },
+    {
+      "file": "experiment-patches/bugfix/02-K8S-01-fix-core-name-applied-and-unattempted-documents-when.patch",
+      "sha256": "d14399e73c08e9798c8205be8fb8a95a1095be2ab3804a8413f9f61f5f57d2a5"
+    },
+    {
+      "file": "experiment-patches/bugfix/03-K8S-03-fix-core-report-pods_delete-clean-up-failures-and-de.patch",
+      "sha256": "91bac775b69c138af0c141e19e64b51d066de03221ed6179629ec803c2a81dbe"
+    },
+    {
+      "file": "experiment-patches/bugfix/04-K8S-07-fix-output-omit-managedFields-from-write-results.patch",
+      "sha256": "c8783a0df4ae30fa6e35afde462eec27d6b5cf59d2a42b79c026a1bdca8e72a0"
+    },
+    {
+      "file": "experiment-patches/bugfix/05-K8S-08-fix-kubevirt-refuse-vm_create-over-an-existing-Virtu.patch",
+      "sha256": "e7db54958cf640d6d3450d26e4c5f4522c3c7bb0ee0bb391bc61e5d6e6731398"
+    },
+    {
+      "file": "experiment-patches/bugfix/06-K8S-09-fix-tekton-kubevirt-refuse-wrongly-typed-params-and-.patch",
+      "sha256": "c3f7579c3499f5a33f5b4a692d608c5c2345dcd7d45a75ae296997a4af9e0204"
+    },
+    {
+      "file": "experiment-patches/bugfix/07-K8S-11-fix-core-reject-pods_run-ports-outside-1-65535.patch",
+      "sha256": "364a87e82e5ce404571726a00f431aae85512dba8425a1e15cf608a9e8ee69c1"
+    },
+    {
+      "file": "experiment-patches/bugfix/08-K8S-12-fix-kubevirt-do-not-annotate-vm_clone-as-idempotent.patch",
+      "sha256": "697de4cb55dd36caf7078b333c6636466d79aa16bf45001b94fdea05c909ec47"
+    },
+    {
+      "file": "experiment-patches/bugfix/09-K8S-14-fix-config-refuse-unknown-tool-names-in-enabled_tool.patch",
+      "sha256": "eefbb834eafdc4b62b5254712b0c0fe54c585af36af8f4c683b9190e758780ca"
+    },
+    {
+      "file": "experiment-patches/bugfix/10-K8S-19-fix-core-return-pods_exec-output-when-the-command-ex.patch",
+      "sha256": "0c548d4b393454863d5bcca90a6fd3fca57e672b0662219388261d2a8f261bf8"
+    },
+    {
+      "file": "experiment-patches/bugfix/11-K8S-20-fix-helm-create-chart-objects-in-the-namespace-argum.patch",
+      "sha256": "c3f7ec71fb93f2b9322a8255b1cc08e6ac685b1f4750b06149f2c33e2981eb0a"
+    },
+    {
+      "file": "experiment-patches/bugfix/12-K8S-17N-fix-helm-do-not-report-a-refused-release-lookup-as-n.patch",
+      "sha256": "033323a74f73b0031c16218e66815ab020bf94a5ae5025aa54283ab522f21b8c"
+    },
+    {
+      "file": "experiment-patches/bugfix/13-K8S-23-fix-core-skip-the-SelfSubjectAccessReview-when-a-nam.patch",
+      "sha256": "134f29cb0d7a8c8fc7c5816b8d550463f371e2242de9da0f33d43077df9337ae"
+    },
+    {
+      "file": "experiment-patches/bugfix/14-K8S-24-fix-core-format-events_list-timestamps-as-RFC-3339-i.patch",
+      "sha256": "3de5bdf5ae0a32601c188f463c4fd0553c71dc5d8ea246ceddbf0bae9f9deba7"
+    },
+    {
+      "file": "experiment-patches/bugfix/15-K8S-25-fix-kubevirt-build-vm_create-s-VirtualMachine-as-dat.patch",
+      "sha256": "01926fff591ddd0c979a84f8f102cee3b70eff42108673ed97f6b64ce0c56f63"
+    },
+    {
+      "file": "experiment-patches/bugfix/16-K8S-02-fix-core-annotate-pods_run-as-destructive-and-never-.patch",
+      "sha256": "cd894f0c7ea31695a1b275d2b48c5c47019a55df424a0d42c93ef964e553b7bd"
+    },
+    {
+      "file": "experiment-patches/usability/01-C3-C25-feat-core-trimmed-write-receipts-with-output-full-sc.patch",
+      "sha256": "014c3fa8eaea1c38561bd49e07c60d1076e37295d50f7feae3148f7c9788c098"
+    },
+    {
+      "file": "experiment-patches/usability/02-C24-C26-feat-core-apply-without-force-by-default-and-report-.patch",
+      "sha256": "f1d3e26dc782a4ab677e29d7100e530a36e21c1823656722e602e8596f3806b9"
+    },
+    {
+      "file": "experiment-patches/usability/03-C28-feat-core-validate-multi-document-manifests-first-pe.patch",
+      "sha256": "68d55c1c0f66f902555f7ac7678c0de921bdfb65d17683a90882157f32f321a6"
+    },
+    {
+      "file": "experiment-patches/usability/04-C2-feat-core-add-resources_patch-with-an-optional-resou.patch",
+      "sha256": "524c8f00c2fbb717db445f66806c4191ee955619d82cade7f3a994916e023aeb"
+    },
+    {
+      "file": "experiment-patches/usability/05-C6-feat-core-delete-results-say-gone-or-pending-Backgro.patch",
+      "sha256": "9f76b62cfa31c7dddb4ace94a2304053bb5db9dfbf181fab30619fed7d6c4d50"
+    },
+    {
+      "file": "experiment-patches/usability/06-C8-feat-core-batch-delete-scale-and-label-by-selector-w.patch",
+      "sha256": "d08f5b3bec526f68325ae3ccadf9499f37ed98ca73d90960cb20cbfddb598967"
+    },
+    {
+      "file": "experiment-patches/usability/07-C9-C27-feat-core-list-several-kinds-in-one-call-multi-get-a.patch",
+      "sha256": "6eaf37baa8a24d2cfee62e285f1082ff9d5eb818eccfc07a5711c3061051655b"
+    },
+    {
+      "file": "experiment-patches/usability/08-C22-C15-feat-core-trim-structured-list-rows-say-when-a-list-.patch",
+      "sha256": "3cbe0d3de68a8bcb2544b68cdff953b62caf08dcdde5de15f0e4153028356aed"
+    },
+    {
+      "file": "experiment-patches/usability/09-C13-feat-core-add-auth_can_i-C13.patch",
+      "sha256": "e5523eabef2a7a7f548c2eb24bafbefb54f3646a76ebfb6ab239ea7a5a1b44f2"
+    },
+    {
+      "file": "experiment-patches/usability/10-C10-feat-core-add-resources_rollout-restart-undo-status-.patch",
+      "sha256": "89d2146e31e1f0efd0f05996830d4f4d2ae49569407d4ada9cb6285d9eee4718"
+    },
+    {
+      "file": "experiment-patches/usability/11-C5-K8S-05-feat-core-helm-bounded-waits-on-writes-and-deletes-h.patch",
+      "sha256": "cb798ad62cf8b76841da48c392e83ff62e6c3284004539b5e7f3c0ad83ef623f"
+    },
+    {
+      "file": "experiment-patches/usability/12-C20-C21-feat-core-pods_exec-keeps-stderr-next-to-stdout-pods.patch",
+      "sha256": "8787293d9d1e9da0ca542745d5fe761d0a4b687431f1849c76c589bac572e32b"
+    },
+    {
+      "file": "experiment-patches/usability/13-C7-feat-core-pods_run-takes-command-args-and-restartPol.patch",
+      "sha256": "e497f1d6cd962301af2be5f1b7085b753a5fece860579207ddb84aa7c32de81d"
+    },
+    {
+      "file": "experiment-patches/usability/14-C12-C23-feat-helm-helm_list-shows-every-release-state-helm_u.patch",
+      "sha256": "c1c1090547dc7056f777c002d2b63db85fb533d91f2391613df0d750b298a5b9"
+    },
+    {
+      "file": "experiment-patches/usability/15-C14-K8S-16-feat-tekton-cancel-reads-the-run-and-reports-its-sta.patch",
+      "sha256": "a448ad0d171c5c259a2ba9ee7ec0a6077aa247ee85c5d4a89f4acb08a5fb8a8f"
+    },
+    {
+      "file": "experiment-patches/usability/16-K8S-13-feat-kubevirt-vm_lifecycle-run_policy-restart-keeps-.patch",
+      "sha256": "4f7c9da3c41c6a373f98f7e91ec435545364e25f244e6b63834587bdb6f6123a"
+    },
+    {
+      "file": "experiment-patches/usability/17-C30-feat-mcp-validate-tool-arguments-against-the-input-s.patch",
+      "sha256": "3f17403e2907facec8f55f239482fceaa939874336f5e3a2d07cf6a513a4650d"
+    },
+    {
+      "file": "experiment-patches/usability/18-C29-C16-feat-mcp-core-default-server-instructions-descriptio.patch",
+      "sha256": "dd6b5bf98edfd470c8a79b9c4267a360f2492d7b8f867eaeac71bbcd470352b2"
+    },
+    {
+      "file": "experiment-patches/usability/19-C32-fix-helm-annotate-helm_install-as-destructive-and-no.patch",
+      "sha256": "4404808b42a7e01becb2fd3b21ad187ab8a59ff5583b548e212be97e558bb63f"
+    }
+  ],
+  "go_version": "go version go1.26.11 darwin/arm64",
+  "go_mod_go": "1.26.10",
+  "flags": {
+    "GOTOOLCHAIN": "local",
+    "GOFLAGS": "-mod=readonly",
+    "CGO_ENABLED": "0",
+    "trimpath": true,
+    "build_time": "2026-11-04T14:28:32-05:00",
+    "version_string": "v0.1.2-research"
+  },
+  "deviations": [
+    "no tidy/format/lint step",
+    "toolchain from PATH (GOTOOLCHAIN=local)",
+    "-trimpath",
+    "BuildTime = commit date",
+    "CGO_ENABLED=0"
+  ],
+  "binary_sha256": "167a5a650592d314ffbb24ddbe3e2b81c45fb49c13062acd53c02052d58ddb82",
+  "built_at": "2026-11-11T20:10:05Z",
+  "published_note": "Record of the measured build, copied from IsoKron's harness. Patch paths rewritten to this repository's layout (experiment-patches/); every sha256 is unchanged and matches the file here. The binary embedded the VCS stamp of the harness repository it was built in (DRV-3), so binary_sha256 is reproducible only there; harness/build/build.sh builds without a stamp."
+}

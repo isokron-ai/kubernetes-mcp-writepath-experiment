@@ -1,0 +1,29 @@
+{
+  "name": "main-13bfb96f",
+  "repo": "https://github.com/containers/kubernetes-mcp-server.git",
+  "ref": "main",
+  "commit": "13bfb96f1d97c6ac5ff5c1f2643a821c59af88cf",
+  "commit_date": "2026-11-10T20:30:22Z",
+  "descends_from_pin": "66553fed5c16454e5814b41e331b4357f15806d8",
+  "patches": [],
+  "go_version": "go version go1.26.11 darwin/arm64",
+  "go_mod_go": "1.26.10",
+  "flags": {
+    "GOTOOLCHAIN": "local",
+    "GOFLAGS": "-mod=readonly",
+    "CGO_ENABLED": "0",
+    "trimpath": true,
+    "build_time": "2026-11-10T20:30:22Z",
+    "version_string": "main-13bfb96f"
+  },
+  "deviations": [
+    "no tidy/format/lint step",
+    "toolchain from PATH (GOTOOLCHAIN=local)",
+    "-trimpath",
+    "BuildTime = commit date",
+    "CGO_ENABLED=0"
+  ],
+  "binary_sha256": "2de70e338525344325521030d8ace9321771058aefe37a1826273405d928fd65",
+  "built_at": "2026-11-11T15:15:42Z",
+  "published_note": "Record of the measured build, copied from IsoKron's harness. Patch paths rewritten to this repository's layout (experiment-patches/); every sha256 is unchanged and matches the file here. The binary embedded the VCS stamp of the harness repository it was built in (DRV-3), so binary_sha256 is reproducible only there; harness/build/build.sh builds without a stamp."
+}

@@ -1,0 +1,6374 @@
+{
+ "measured_at": "2026-11-11T20:19:08.750Z",
+ "tokenizer": "cl100k_base (gpt-tokenizer)",
+ "builds": {
+  "baseline": {
+   "binary_sha256": "931b5f5a4a3947f9a4ab329e4731434dd8a9722aee681526f84fafb85130e889",
+   "variants": {
+    "core": {
+     "tool_count": 21,
+     "tools_list_bytes": 30144,
+     "tools_list_tokens": 6807,
+     "instructions_tokens": 0,
+     "tools": [
+      {
+       "name": "api_resources_list",
+       "tokens": 265,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "API Resources: List by Kind"
+       },
+       "properties": [
+        "kind"
+       ]
+      },
+      {
+       "name": "configuration_view",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Configuration: View"
+       },
+       "properties": [
+        "minified"
+       ]
+      },
+      {
+       "name": "events_list",
+       "tokens": 406,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Events: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "namespaces_list",
+       "tokens": 326,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Namespaces: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "nodes_log",
+       "tokens": 297,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Log"
+       },
+       "properties": [
+        "name",
+        "query",
+        "tailLines"
+       ]
+      },
+      {
+       "name": "nodes_stats_summary",
+       "tokens": 254,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Stats Summary"
+       },
+       "properties": [
+        "name"
+       ]
+      },
+      {
+       "name": "nodes_top",
+       "tokens": 359,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Nodes: Top"
+       },
+       "properties": [
+        "continue",
+        "label_selector",
+        "limit",
+        "name"
+       ]
+      },
+      {
+       "name": "pods_delete",
+       "tokens": 216,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Delete"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_exec",
+       "tokens": 301,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Exec"
+       },
+       "properties": [
+        "command",
+        "container",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_get",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Get"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_list",
+       "tokens": 471,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "pods_list_in_namespace",
+       "tokens": 497,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List in Namespace"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_log",
+       "tokens": 276,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Log"
+       },
+       "properties": [
+        "container",
+        "name",
+        "namespace",
+        "previous",
+        "tail"
+       ]
+      },
+      {
+       "name": "pods_run",
+       "tokens": 264,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Run"
+       },
+       "properties": [
+        "image",
+        "name",
+        "namespace",
+        "port"
+       ]
+      },
+      {
+       "name": "pods_top",
+       "tokens": 460,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Top"
+       },
+       "properties": [
+        "all_namespaces",
+        "continue",
+        "label_selector",
+        "limit",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "projects_list",
+       "tokens": 232,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Projects: List"
+       },
+       "properties": [
+        "continue",
+        "limit"
+       ]
+      },
+      {
+       "name": "resources_create_or_update",
+       "tokens": 249,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Create or Update"
+       },
+       "properties": [
+        "resource"
+       ]
+      },
+      {
+       "name": "resources_delete",
+       "tokens": 364,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Delete"
+       },
+       "properties": [
+        "apiVersion",
+        "gracePeriodSeconds",
+        "kind",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_get",
+       "tokens": 310,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: Get"
+       },
+       "properties": [
+        "apiVersion",
+        "kind",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_list",
+       "tokens": 626,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: List"
+       },
+       "properties": [
+        "apiVersion",
+        "continue",
+        "fieldSelector",
+        "kind",
+        "labelSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_scale",
+       "tokens": 331,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Scale"
+       },
+       "properties": [
+        "apiVersion",
+        "kind",
+        "name",
+        "namespace",
+        "scale"
+       ]
+      }
+     ]
+    },
+    "helm": {
+     "tool_count": 24,
+     "tools_list_bytes": 33238,
+     "tools_list_tokens": 7487,
+     "instructions_tokens": 0,
+     "tools": [
+      {
+       "name": "api_resources_list",
+       "tokens": 265,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "API Resources: List by Kind"
+       },
+       "properties": [
+        "kind"
+       ]
+      },
+      {
+       "name": "configuration_view",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Configuration: View"
+       },
+       "properties": [
+        "minified"
+       ]
+      },
+      {
+       "name": "events_list",
+       "tokens": 406,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Events: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "helm_install",
+       "tokens": 223,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Helm: Install"
+       },
+       "properties": [
+        "chart",
+        "name",
+        "namespace",
+        "values"
+       ]
+      },
+      {
+       "name": "helm_list",
+       "tokens": 305,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Helm: List"
+       },
+       "properties": [
+        "all_namespaces",
+        "limit",
+        "namespace",
+        "offset"
+       ]
+      },
+      {
+       "name": "helm_uninstall",
+       "tokens": 155,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Helm: Uninstall"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "namespaces_list",
+       "tokens": 326,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Namespaces: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "nodes_log",
+       "tokens": 297,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Log"
+       },
+       "properties": [
+        "name",
+        "query",
+        "tailLines"
+       ]
+      },
+      {
+       "name": "nodes_stats_summary",
+       "tokens": 254,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Stats Summary"
+       },
+       "properties": [
+        "name"
+       ]
+      },
+      {
+       "name": "nodes_top",
+       "tokens": 359,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Nodes: Top"
+       },
+       "properties": [
+        "continue",
+        "label_selector",
+        "limit",
+        "name"
+       ]
+      },
+      {
+       "name": "pods_delete",
+       "tokens": 216,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Delete"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_exec",
+       "tokens": 301,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Exec"
+       },
+       "properties": [
+        "command",
+        "container",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_get",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Get"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_list",
+       "tokens": 471,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "pods_list_in_namespace",
+       "tokens": 497,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List in Namespace"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_log",
+       "tokens": 276,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Log"
+       },
+       "properties": [
+        "container",
+        "name",
+        "namespace",
+        "previous",
+        "tail"
+       ]
+      },
+      {
+       "name": "pods_run",
+       "tokens": 264,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Run"
+       },
+       "properties": [
+        "image",
+        "name",
+        "namespace",
+        "port"
+       ]
+      },
+      {
+       "name": "pods_top",
+       "tokens": 460,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Top"
+       },
+       "properties": [
+        "all_namespaces",
+        "continue",
+        "label_selector",
+        "limit",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "projects_list",
+       "tokens": 232,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Projects: List"
+       },
+       "properties": [
+        "continue",
+        "limit"
+       ]
+      },
+      {
+       "name": "resources_create_or_update",
+       "tokens": 249,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Create or Update"
+       },
+       "properties": [
+        "resource"
+       ]
+      },
+      {
+       "name": "resources_delete",
+       "tokens": 364,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Delete"
+       },
+       "properties": [
+        "apiVersion",
+        "gracePeriodSeconds",
+        "kind",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_get",
+       "tokens": 310,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: Get"
+       },
+       "properties": [
+        "apiVersion",
+        "kind",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_list",
+       "tokens": 626,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: List"
+       },
+       "properties": [
+        "apiVersion",
+        "continue",
+        "fieldSelector",
+        "kind",
+        "labelSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_scale",
+       "tokens": 331,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Scale"
+       },
+       "properties": [
+        "apiVersion",
+        "kind",
+        "name",
+        "namespace",
+        "scale"
+       ]
+      }
+     ]
+    },
+    "tekton": {
+     "tool_count": 28,
+     "tools_list_bytes": 40691,
+     "tools_list_tokens": 9158,
+     "instructions_tokens": 0,
+     "tools": [
+      {
+       "name": "api_resources_list",
+       "tokens": 265,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "API Resources: List by Kind"
+       },
+       "properties": [
+        "kind"
+       ]
+      },
+      {
+       "name": "configuration_view",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Configuration: View"
+       },
+       "properties": [
+        "minified"
+       ]
+      },
+      {
+       "name": "events_list",
+       "tokens": 406,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Events: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "namespaces_list",
+       "tokens": 326,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Namespaces: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "nodes_log",
+       "tokens": 297,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Log"
+       },
+       "properties": [
+        "name",
+        "query",
+        "tailLines"
+       ]
+      },
+      {
+       "name": "nodes_stats_summary",
+       "tokens": 254,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Stats Summary"
+       },
+       "properties": [
+        "name"
+       ]
+      },
+      {
+       "name": "nodes_top",
+       "tokens": 359,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Nodes: Top"
+       },
+       "properties": [
+        "continue",
+        "label_selector",
+        "limit",
+        "name"
+       ]
+      },
+      {
+       "name": "pods_delete",
+       "tokens": 216,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Delete"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_exec",
+       "tokens": 301,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Exec"
+       },
+       "properties": [
+        "command",
+        "container",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_get",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Get"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_list",
+       "tokens": 471,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "pods_list_in_namespace",
+       "tokens": 497,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List in Namespace"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_log",
+       "tokens": 276,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Log"
+       },
+       "properties": [
+        "container",
+        "name",
+        "namespace",
+        "previous",
+        "tail"
+       ]
+      },
+      {
+       "name": "pods_run",
+       "tokens": 264,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Run"
+       },
+       "properties": [
+        "image",
+        "name",
+        "namespace",
+        "port"
+       ]
+      },
+      {
+       "name": "pods_top",
+       "tokens": 460,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Top"
+       },
+       "properties": [
+        "all_namespaces",
+        "continue",
+        "label_selector",
+        "limit",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "projects_list",
+       "tokens": 232,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Projects: List"
+       },
+       "properties": [
+        "continue",
+        "limit"
+       ]
+      },
+      {
+       "name": "resources_create_or_update",
+       "tokens": 249,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Create or Update"
+       },
+       "properties": [
+        "resource"
+       ]
+      },
+      {
+       "name": "resources_delete",
+       "tokens": 364,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Delete"
+       },
+       "properties": [
+        "apiVersion",
+        "gracePeriodSeconds",
+        "kind",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_get",
+       "tokens": 310,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: Get"
+       },
+       "properties": [
+        "apiVersion",
+        "kind",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_list",
+       "tokens": 626,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: List"
+       },
+       "properties": [
+        "apiVersion",
+        "continue",
+        "fieldSelector",
+        "kind",
+        "labelSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_scale",
+       "tokens": 331,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Scale"
+       },
+       "properties": [
+        "apiVersion",
+        "kind",
+        "name",
+        "namespace",
+        "scale"
+       ]
+      },
+      {
+       "name": "tekton_pipeline_start",
+       "tokens": 261,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Tekton: Start Pipeline"
+       },
+       "properties": [
+        "name",
+        "namespace",
+        "params"
+       ]
+      },
+      {
+       "name": "tekton_pipelinerun_diagnose",
+       "tokens": 777,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "PipelineRun: Diagnose"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "tekton_pipelinerun_lifecycle",
+       "tokens": 267,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Tekton: PipelineRun Lifecycle"
+       },
+       "properties": [
+        "action",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "tekton_pipelinerun_logs",
+       "tokens": 324,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Tekton: Get PipelineRun Logs"
+       },
+       "properties": [
+        "name",
+        "namespace",
+        "step",
+        "tail",
+        "task"
+       ]
+      },
+      {
+       "name": "tekton_task_start",
+       "tokens": 258,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Tekton: Start Task"
+       },
+       "properties": [
+        "name",
+        "namespace",
+        "params"
+       ]
+      },
+      {
+       "name": "tekton_taskrun_logs",
+       "tokens": 266,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Tekton: Get TaskRun Logs"
+       },
+       "properties": [
+        "name",
+        "namespace",
+        "step",
+        "tail"
+       ]
+      },
+      {
+       "name": "tekton_taskrun_restart",
+       "tokens": 205,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Tekton: Restart TaskRun"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      }
+     ]
+    },
+    "kubevirt": {
+     "tool_count": 28,
+     "tools_list_bytes": 44551,
+     "tools_list_tokens": 9924,
+     "instructions_tokens": 0,
+     "tools": [
+      {
+       "name": "api_resources_list",
+       "tokens": 265,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "API Resources: List by Kind"
+       },
+       "properties": [
+        "kind"
+       ]
+      },
+      {
+       "name": "configuration_view",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Configuration: View"
+       },
+       "properties": [
+        "minified"
+       ]
+      },
+      {
+       "name": "events_list",
+       "tokens": 406,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Events: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "namespaces_list",
+       "tokens": 326,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Namespaces: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "nodes_log",
+       "tokens": 297,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Log"
+       },
+       "properties": [
+        "name",
+        "query",
+        "tailLines"
+       ]
+      },
+      {
+       "name": "nodes_stats_summary",
+       "tokens": 254,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Stats Summary"
+       },
+       "properties": [
+        "name"
+       ]
+      },
+      {
+       "name": "nodes_top",
+       "tokens": 359,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Nodes: Top"
+       },
+       "properties": [
+        "continue",
+        "label_selector",
+        "limit",
+        "name"
+       ]
+      },
+      {
+       "name": "pods_delete",
+       "tokens": 216,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Delete"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_exec",
+       "tokens": 301,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Exec"
+       },
+       "properties": [
+        "command",
+        "container",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_get",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Get"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_list",
+       "tokens": 471,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "pods_list_in_namespace",
+       "tokens": 497,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List in Namespace"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_log",
+       "tokens": 276,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Log"
+       },
+       "properties": [
+        "container",
+        "name",
+        "namespace",
+        "previous",
+        "tail"
+       ]
+      },
+      {
+       "name": "pods_run",
+       "tokens": 264,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Run"
+       },
+       "properties": [
+        "image",
+        "name",
+        "namespace",
+        "port"
+       ]
+      },
+      {
+       "name": "pods_top",
+       "tokens": 460,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Top"
+       },
+       "properties": [
+        "all_namespaces",
+        "continue",
+        "label_selector",
+        "limit",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "projects_list",
+       "tokens": 232,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Projects: List"
+       },
+       "properties": [
+        "continue",
+        "limit"
+       ]
+      },
+      {
+       "name": "resources_create_or_update",
+       "tokens": 249,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Create or Update"
+       },
+       "properties": [
+        "resource"
+       ]
+      },
+      {
+       "name": "resources_delete",
+       "tokens": 364,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Delete"
+       },
+       "properties": [
+        "apiVersion",
+        "gracePeriodSeconds",
+        "kind",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_get",
+       "tokens": 310,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: Get"
+       },
+       "properties": [
+        "apiVersion",
+        "kind",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_list",
+       "tokens": 626,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: List"
+       },
+       "properties": [
+        "apiVersion",
+        "continue",
+        "fieldSelector",
+        "kind",
+        "labelSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_scale",
+       "tokens": 331,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Scale"
+       },
+       "properties": [
+        "apiVersion",
+        "kind",
+        "name",
+        "namespace",
+        "scale"
+       ]
+      },
+      {
+       "name": "vm_clone",
+       "tokens": 215,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Virtual Machine: Clone"
+       },
+       "properties": [
+        "name",
+        "namespace",
+        "targetName"
+       ]
+      },
+      {
+       "name": "vm_console_screenshot",
+       "tokens": 271,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Virtual Machine: Console Screenshot"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "vm_create",
+       "tokens": 931,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Virtual Machine: Create"
+       },
+       "properties": [
+        "autostart",
+        "instancetype",
+        "name",
+        "namespace",
+        "networks",
+        "performance",
+        "preference",
+        "size",
+        "storage",
+        "workload"
+       ]
+      },
+      {
+       "name": "vm_create_from_template",
+       "tokens": 318,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Virtual Machine: Create from Template"
+       },
+       "properties": [
+        "namespace",
+        "parameters",
+        "template_name"
+       ]
+      },
+      {
+       "name": "vm_guest_info",
+       "tokens": 466,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Virtual Machine: Guest Agent Info"
+       },
+       "properties": [
+        "info_type",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "vm_lifecycle",
+       "tokens": 359,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Virtual Machine: Lifecycle"
+       },
+       "properties": [
+        "action",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "vm_troubleshoot",
+       "tokens": 564,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Virtual Machine: Troubleshoot"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      }
+     ]
+    },
+    "disable_destructive": {
+     "tool_count": 16,
+     "tools_list_bytes": 23507,
+     "tools_list_tokens": 5351,
+     "instructions_tokens": 0,
+     "tools": [
+      {
+       "name": "api_resources_list",
+       "tokens": 265,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "API Resources: List by Kind"
+       },
+       "properties": [
+        "kind"
+       ]
+      },
+      {
+       "name": "configuration_view",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Configuration: View"
+       },
+       "properties": [
+        "minified"
+       ]
+      },
+      {
+       "name": "events_list",
+       "tokens": 406,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Events: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "namespaces_list",
+       "tokens": 326,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Namespaces: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "nodes_log",
+       "tokens": 297,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Log"
+       },
+       "properties": [
+        "name",
+        "query",
+        "tailLines"
+       ]
+      },
+      {
+       "name": "nodes_stats_summary",
+       "tokens": 254,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Stats Summary"
+       },
+       "properties": [
+        "name"
+       ]
+      },
+      {
+       "name": "nodes_top",
+       "tokens": 359,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Nodes: Top"
+       },
+       "properties": [
+        "continue",
+        "label_selector",
+        "limit",
+        "name"
+       ]
+      },
+      {
+       "name": "pods_get",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Get"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_list",
+       "tokens": 471,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "pods_list_in_namespace",
+       "tokens": 497,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List in Namespace"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_log",
+       "tokens": 276,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Log"
+       },
+       "properties": [
+        "container",
+        "name",
+        "namespace",
+        "previous",
+        "tail"
+       ]
+      },
+      {
+       "name": "pods_run",
+       "tokens": 264,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Run"
+       },
+       "properties": [
+        "image",
+        "name",
+        "namespace",
+        "port"
+       ]
+      },
+      {
+       "name": "pods_top",
+       "tokens": 460,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Top"
+       },
+       "properties": [
+        "all_namespaces",
+        "continue",
+        "label_selector",
+        "limit",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "projects_list",
+       "tokens": 232,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Projects: List"
+       },
+       "properties": [
+        "continue",
+        "limit"
+       ]
+      },
+      {
+       "name": "resources_get",
+       "tokens": 310,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: Get"
+       },
+       "properties": [
+        "apiVersion",
+        "kind",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_list",
+       "tokens": 626,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: List"
+       },
+       "properties": [
+        "apiVersion",
+        "continue",
+        "fieldSelector",
+        "kind",
+        "labelSelector",
+        "limit",
+        "namespace"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  "fixed": {
+   "binary_sha256": "bac15e1475c911b2ef43b06292a7a89d850fe3316f5eca614a8c8034c88af574",
+   "variants": {
+    "core": {
+     "tool_count": 21,
+     "tools_list_bytes": 30170,
+     "tools_list_tokens": 6819,
+     "instructions_tokens": 0,
+     "tools": [
+      {
+       "name": "api_resources_list",
+       "tokens": 265,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "API Resources: List by Kind"
+       },
+       "properties": [
+        "kind"
+       ]
+      },
+      {
+       "name": "configuration_view",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Configuration: View"
+       },
+       "properties": [
+        "minified"
+       ]
+      },
+      {
+       "name": "events_list",
+       "tokens": 406,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Events: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "namespaces_list",
+       "tokens": 326,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Namespaces: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "nodes_log",
+       "tokens": 297,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Log"
+       },
+       "properties": [
+        "name",
+        "query",
+        "tailLines"
+       ]
+      },
+      {
+       "name": "nodes_stats_summary",
+       "tokens": 254,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Stats Summary"
+       },
+       "properties": [
+        "name"
+       ]
+      },
+      {
+       "name": "nodes_top",
+       "tokens": 359,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Nodes: Top"
+       },
+       "properties": [
+        "continue",
+        "label_selector",
+        "limit",
+        "name"
+       ]
+      },
+      {
+       "name": "pods_delete",
+       "tokens": 216,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Delete"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_exec",
+       "tokens": 301,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Exec"
+       },
+       "properties": [
+        "command",
+        "container",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_get",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Get"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_list",
+       "tokens": 471,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "pods_list_in_namespace",
+       "tokens": 497,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List in Namespace"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_log",
+       "tokens": 276,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Log"
+       },
+       "properties": [
+        "container",
+        "name",
+        "namespace",
+        "previous",
+        "tail"
+       ]
+      },
+      {
+       "name": "pods_run",
+       "tokens": 276,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Run"
+       },
+       "properties": [
+        "image",
+        "name",
+        "namespace",
+        "port"
+       ]
+      },
+      {
+       "name": "pods_top",
+       "tokens": 460,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Top"
+       },
+       "properties": [
+        "all_namespaces",
+        "continue",
+        "label_selector",
+        "limit",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "projects_list",
+       "tokens": 232,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Projects: List"
+       },
+       "properties": [
+        "continue",
+        "limit"
+       ]
+      },
+      {
+       "name": "resources_create_or_update",
+       "tokens": 249,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Create or Update"
+       },
+       "properties": [
+        "resource"
+       ]
+      },
+      {
+       "name": "resources_delete",
+       "tokens": 364,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Delete"
+       },
+       "properties": [
+        "apiVersion",
+        "gracePeriodSeconds",
+        "kind",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_get",
+       "tokens": 310,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: Get"
+       },
+       "properties": [
+        "apiVersion",
+        "kind",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_list",
+       "tokens": 626,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: List"
+       },
+       "properties": [
+        "apiVersion",
+        "continue",
+        "fieldSelector",
+        "kind",
+        "labelSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_scale",
+       "tokens": 331,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Scale"
+       },
+       "properties": [
+        "apiVersion",
+        "kind",
+        "name",
+        "namespace",
+        "scale"
+       ]
+      }
+     ]
+    },
+    "helm": {
+     "tool_count": 24,
+     "tools_list_bytes": 33264,
+     "tools_list_tokens": 7499,
+     "instructions_tokens": 0,
+     "tools": [
+      {
+       "name": "api_resources_list",
+       "tokens": 265,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "API Resources: List by Kind"
+       },
+       "properties": [
+        "kind"
+       ]
+      },
+      {
+       "name": "configuration_view",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Configuration: View"
+       },
+       "properties": [
+        "minified"
+       ]
+      },
+      {
+       "name": "events_list",
+       "tokens": 406,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Events: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "helm_install",
+       "tokens": 223,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Helm: Install"
+       },
+       "properties": [
+        "chart",
+        "name",
+        "namespace",
+        "values"
+       ]
+      },
+      {
+       "name": "helm_list",
+       "tokens": 305,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Helm: List"
+       },
+       "properties": [
+        "all_namespaces",
+        "limit",
+        "namespace",
+        "offset"
+       ]
+      },
+      {
+       "name": "helm_uninstall",
+       "tokens": 155,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Helm: Uninstall"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "namespaces_list",
+       "tokens": 326,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Namespaces: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "nodes_log",
+       "tokens": 297,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Log"
+       },
+       "properties": [
+        "name",
+        "query",
+        "tailLines"
+       ]
+      },
+      {
+       "name": "nodes_stats_summary",
+       "tokens": 254,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Stats Summary"
+       },
+       "properties": [
+        "name"
+       ]
+      },
+      {
+       "name": "nodes_top",
+       "tokens": 359,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Nodes: Top"
+       },
+       "properties": [
+        "continue",
+        "label_selector",
+        "limit",
+        "name"
+       ]
+      },
+      {
+       "name": "pods_delete",
+       "tokens": 216,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Delete"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_exec",
+       "tokens": 301,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Exec"
+       },
+       "properties": [
+        "command",
+        "container",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_get",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Get"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_list",
+       "tokens": 471,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "pods_list_in_namespace",
+       "tokens": 497,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List in Namespace"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_log",
+       "tokens": 276,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Log"
+       },
+       "properties": [
+        "container",
+        "name",
+        "namespace",
+        "previous",
+        "tail"
+       ]
+      },
+      {
+       "name": "pods_run",
+       "tokens": 276,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Run"
+       },
+       "properties": [
+        "image",
+        "name",
+        "namespace",
+        "port"
+       ]
+      },
+      {
+       "name": "pods_top",
+       "tokens": 460,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Top"
+       },
+       "properties": [
+        "all_namespaces",
+        "continue",
+        "label_selector",
+        "limit",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "projects_list",
+       "tokens": 232,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Projects: List"
+       },
+       "properties": [
+        "continue",
+        "limit"
+       ]
+      },
+      {
+       "name": "resources_create_or_update",
+       "tokens": 249,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Create or Update"
+       },
+       "properties": [
+        "resource"
+       ]
+      },
+      {
+       "name": "resources_delete",
+       "tokens": 364,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Delete"
+       },
+       "properties": [
+        "apiVersion",
+        "gracePeriodSeconds",
+        "kind",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_get",
+       "tokens": 310,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: Get"
+       },
+       "properties": [
+        "apiVersion",
+        "kind",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_list",
+       "tokens": 626,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: List"
+       },
+       "properties": [
+        "apiVersion",
+        "continue",
+        "fieldSelector",
+        "kind",
+        "labelSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_scale",
+       "tokens": 331,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Scale"
+       },
+       "properties": [
+        "apiVersion",
+        "kind",
+        "name",
+        "namespace",
+        "scale"
+       ]
+      }
+     ]
+    },
+    "tekton": {
+     "tool_count": 28,
+     "tools_list_bytes": 40717,
+     "tools_list_tokens": 9170,
+     "instructions_tokens": 0,
+     "tools": [
+      {
+       "name": "api_resources_list",
+       "tokens": 265,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "API Resources: List by Kind"
+       },
+       "properties": [
+        "kind"
+       ]
+      },
+      {
+       "name": "configuration_view",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Configuration: View"
+       },
+       "properties": [
+        "minified"
+       ]
+      },
+      {
+       "name": "events_list",
+       "tokens": 406,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Events: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "namespaces_list",
+       "tokens": 326,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Namespaces: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "nodes_log",
+       "tokens": 297,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Log"
+       },
+       "properties": [
+        "name",
+        "query",
+        "tailLines"
+       ]
+      },
+      {
+       "name": "nodes_stats_summary",
+       "tokens": 254,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Stats Summary"
+       },
+       "properties": [
+        "name"
+       ]
+      },
+      {
+       "name": "nodes_top",
+       "tokens": 359,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Nodes: Top"
+       },
+       "properties": [
+        "continue",
+        "label_selector",
+        "limit",
+        "name"
+       ]
+      },
+      {
+       "name": "pods_delete",
+       "tokens": 216,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Delete"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_exec",
+       "tokens": 301,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Exec"
+       },
+       "properties": [
+        "command",
+        "container",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_get",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Get"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_list",
+       "tokens": 471,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "pods_list_in_namespace",
+       "tokens": 497,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List in Namespace"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_log",
+       "tokens": 276,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Log"
+       },
+       "properties": [
+        "container",
+        "name",
+        "namespace",
+        "previous",
+        "tail"
+       ]
+      },
+      {
+       "name": "pods_run",
+       "tokens": 276,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Run"
+       },
+       "properties": [
+        "image",
+        "name",
+        "namespace",
+        "port"
+       ]
+      },
+      {
+       "name": "pods_top",
+       "tokens": 460,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Top"
+       },
+       "properties": [
+        "all_namespaces",
+        "continue",
+        "label_selector",
+        "limit",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "projects_list",
+       "tokens": 232,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Projects: List"
+       },
+       "properties": [
+        "continue",
+        "limit"
+       ]
+      },
+      {
+       "name": "resources_create_or_update",
+       "tokens": 249,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Create or Update"
+       },
+       "properties": [
+        "resource"
+       ]
+      },
+      {
+       "name": "resources_delete",
+       "tokens": 364,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Delete"
+       },
+       "properties": [
+        "apiVersion",
+        "gracePeriodSeconds",
+        "kind",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_get",
+       "tokens": 310,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: Get"
+       },
+       "properties": [
+        "apiVersion",
+        "kind",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_list",
+       "tokens": 626,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: List"
+       },
+       "properties": [
+        "apiVersion",
+        "continue",
+        "fieldSelector",
+        "kind",
+        "labelSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_scale",
+       "tokens": 331,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Scale"
+       },
+       "properties": [
+        "apiVersion",
+        "kind",
+        "name",
+        "namespace",
+        "scale"
+       ]
+      },
+      {
+       "name": "tekton_pipeline_start",
+       "tokens": 261,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Tekton: Start Pipeline"
+       },
+       "properties": [
+        "name",
+        "namespace",
+        "params"
+       ]
+      },
+      {
+       "name": "tekton_pipelinerun_diagnose",
+       "tokens": 777,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "PipelineRun: Diagnose"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "tekton_pipelinerun_lifecycle",
+       "tokens": 267,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Tekton: PipelineRun Lifecycle"
+       },
+       "properties": [
+        "action",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "tekton_pipelinerun_logs",
+       "tokens": 324,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Tekton: Get PipelineRun Logs"
+       },
+       "properties": [
+        "name",
+        "namespace",
+        "step",
+        "tail",
+        "task"
+       ]
+      },
+      {
+       "name": "tekton_task_start",
+       "tokens": 258,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Tekton: Start Task"
+       },
+       "properties": [
+        "name",
+        "namespace",
+        "params"
+       ]
+      },
+      {
+       "name": "tekton_taskrun_logs",
+       "tokens": 266,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Tekton: Get TaskRun Logs"
+       },
+       "properties": [
+        "name",
+        "namespace",
+        "step",
+        "tail"
+       ]
+      },
+      {
+       "name": "tekton_taskrun_restart",
+       "tokens": 205,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Tekton: Restart TaskRun"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      }
+     ]
+    },
+    "kubevirt": {
+     "tool_count": 28,
+     "tools_list_bytes": 44584,
+     "tools_list_tokens": 9938,
+     "instructions_tokens": 0,
+     "tools": [
+      {
+       "name": "api_resources_list",
+       "tokens": 265,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "API Resources: List by Kind"
+       },
+       "properties": [
+        "kind"
+       ]
+      },
+      {
+       "name": "configuration_view",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Configuration: View"
+       },
+       "properties": [
+        "minified"
+       ]
+      },
+      {
+       "name": "events_list",
+       "tokens": 406,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Events: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "namespaces_list",
+       "tokens": 326,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Namespaces: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "nodes_log",
+       "tokens": 297,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Log"
+       },
+       "properties": [
+        "name",
+        "query",
+        "tailLines"
+       ]
+      },
+      {
+       "name": "nodes_stats_summary",
+       "tokens": 254,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Stats Summary"
+       },
+       "properties": [
+        "name"
+       ]
+      },
+      {
+       "name": "nodes_top",
+       "tokens": 359,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Nodes: Top"
+       },
+       "properties": [
+        "continue",
+        "label_selector",
+        "limit",
+        "name"
+       ]
+      },
+      {
+       "name": "pods_delete",
+       "tokens": 216,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Delete"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_exec",
+       "tokens": 301,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Exec"
+       },
+       "properties": [
+        "command",
+        "container",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_get",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Get"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_list",
+       "tokens": 471,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "pods_list_in_namespace",
+       "tokens": 497,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List in Namespace"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_log",
+       "tokens": 276,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Log"
+       },
+       "properties": [
+        "container",
+        "name",
+        "namespace",
+        "previous",
+        "tail"
+       ]
+      },
+      {
+       "name": "pods_run",
+       "tokens": 276,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Run"
+       },
+       "properties": [
+        "image",
+        "name",
+        "namespace",
+        "port"
+       ]
+      },
+      {
+       "name": "pods_top",
+       "tokens": 460,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Top"
+       },
+       "properties": [
+        "all_namespaces",
+        "continue",
+        "label_selector",
+        "limit",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "projects_list",
+       "tokens": 232,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Projects: List"
+       },
+       "properties": [
+        "continue",
+        "limit"
+       ]
+      },
+      {
+       "name": "resources_create_or_update",
+       "tokens": 249,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Create or Update"
+       },
+       "properties": [
+        "resource"
+       ]
+      },
+      {
+       "name": "resources_delete",
+       "tokens": 364,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Delete"
+       },
+       "properties": [
+        "apiVersion",
+        "gracePeriodSeconds",
+        "kind",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_get",
+       "tokens": 310,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: Get"
+       },
+       "properties": [
+        "apiVersion",
+        "kind",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_list",
+       "tokens": 626,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: List"
+       },
+       "properties": [
+        "apiVersion",
+        "continue",
+        "fieldSelector",
+        "kind",
+        "labelSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_scale",
+       "tokens": 331,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Scale"
+       },
+       "properties": [
+        "apiVersion",
+        "kind",
+        "name",
+        "namespace",
+        "scale"
+       ]
+      },
+      {
+       "name": "vm_clone",
+       "tokens": 215,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Virtual Machine: Clone"
+       },
+       "properties": [
+        "name",
+        "namespace",
+        "targetName"
+       ]
+      },
+      {
+       "name": "vm_console_screenshot",
+       "tokens": 271,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Virtual Machine: Console Screenshot"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "vm_create",
+       "tokens": 933,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Virtual Machine: Create"
+       },
+       "properties": [
+        "autostart",
+        "instancetype",
+        "name",
+        "namespace",
+        "networks",
+        "performance",
+        "preference",
+        "size",
+        "storage",
+        "workload"
+       ]
+      },
+      {
+       "name": "vm_create_from_template",
+       "tokens": 318,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Virtual Machine: Create from Template"
+       },
+       "properties": [
+        "namespace",
+        "parameters",
+        "template_name"
+       ]
+      },
+      {
+       "name": "vm_guest_info",
+       "tokens": 466,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Virtual Machine: Guest Agent Info"
+       },
+       "properties": [
+        "info_type",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "vm_lifecycle",
+       "tokens": 359,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Virtual Machine: Lifecycle"
+       },
+       "properties": [
+        "action",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "vm_troubleshoot",
+       "tokens": 564,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Virtual Machine: Troubleshoot"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      }
+     ]
+    },
+    "disable_destructive": {
+     "tool_count": 15,
+     "tools_list_bytes": 22315,
+     "tools_list_tokens": 5088,
+     "instructions_tokens": 0,
+     "tools": [
+      {
+       "name": "api_resources_list",
+       "tokens": 265,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "API Resources: List by Kind"
+       },
+       "properties": [
+        "kind"
+       ]
+      },
+      {
+       "name": "configuration_view",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Configuration: View"
+       },
+       "properties": [
+        "minified"
+       ]
+      },
+      {
+       "name": "events_list",
+       "tokens": 406,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Events: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "namespaces_list",
+       "tokens": 326,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Namespaces: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "nodes_log",
+       "tokens": 297,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Log"
+       },
+       "properties": [
+        "name",
+        "query",
+        "tailLines"
+       ]
+      },
+      {
+       "name": "nodes_stats_summary",
+       "tokens": 254,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Stats Summary"
+       },
+       "properties": [
+        "name"
+       ]
+      },
+      {
+       "name": "nodes_top",
+       "tokens": 359,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Nodes: Top"
+       },
+       "properties": [
+        "continue",
+        "label_selector",
+        "limit",
+        "name"
+       ]
+      },
+      {
+       "name": "pods_get",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Get"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_list",
+       "tokens": 471,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "pods_list_in_namespace",
+       "tokens": 497,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List in Namespace"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_log",
+       "tokens": 276,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Log"
+       },
+       "properties": [
+        "container",
+        "name",
+        "namespace",
+        "previous",
+        "tail"
+       ]
+      },
+      {
+       "name": "pods_top",
+       "tokens": 460,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Top"
+       },
+       "properties": [
+        "all_namespaces",
+        "continue",
+        "label_selector",
+        "limit",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "projects_list",
+       "tokens": 232,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Projects: List"
+       },
+       "properties": [
+        "continue",
+        "limit"
+       ]
+      },
+      {
+       "name": "resources_get",
+       "tokens": 310,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: Get"
+       },
+       "properties": [
+        "apiVersion",
+        "kind",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_list",
+       "tokens": 626,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: List"
+       },
+       "properties": [
+        "apiVersion",
+        "continue",
+        "fieldSelector",
+        "kind",
+        "labelSelector",
+        "limit",
+        "namespace"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  "research": {
+   "binary_sha256": "167a5a650592d314ffbb24ddbe3e2b81c45fb49c13062acd53c02052d58ddb82",
+   "variants": {
+    "core": {
+     "tool_count": 25,
+     "tools_list_bytes": 46393,
+     "tools_list_tokens": 10499,
+     "instructions_tokens": 177,
+     "tools": [
+      {
+       "name": "api_resources_list",
+       "tokens": 265,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "API Resources: List by Kind"
+       },
+       "properties": [
+        "kind"
+       ]
+      },
+      {
+       "name": "auth_can_i",
+       "tokens": 426,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Auth: Can I"
+       },
+       "properties": [
+        "apiVersion",
+        "group",
+        "groups",
+        "kind",
+        "name",
+        "namespace",
+        "resource",
+        "subresource",
+        "user",
+        "verb"
+       ]
+      },
+      {
+       "name": "configuration_view",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Configuration: View"
+       },
+       "properties": [
+        "minified"
+       ]
+      },
+      {
+       "name": "events_list",
+       "tokens": 411,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Events: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "namespaces_list",
+       "tokens": 326,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Namespaces: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "nodes_log",
+       "tokens": 297,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Log"
+       },
+       "properties": [
+        "name",
+        "query",
+        "tailLines"
+       ]
+      },
+      {
+       "name": "nodes_stats_summary",
+       "tokens": 254,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Stats Summary"
+       },
+       "properties": [
+        "name"
+       ]
+      },
+      {
+       "name": "nodes_top",
+       "tokens": 359,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Nodes: Top"
+       },
+       "properties": [
+        "continue",
+        "label_selector",
+        "limit",
+        "name"
+       ]
+      },
+      {
+       "name": "pods_delete",
+       "tokens": 216,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Delete"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_exec",
+       "tokens": 301,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Exec"
+       },
+       "properties": [
+        "command",
+        "container",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_get",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Get"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_list",
+       "tokens": 525,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit",
+        "wide"
+       ]
+      },
+      {
+       "name": "pods_list_in_namespace",
+       "tokens": 551,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List in Namespace"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit",
+        "namespace",
+        "wide"
+       ]
+      },
+      {
+       "name": "pods_log",
+       "tokens": 276,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Log"
+       },
+       "properties": [
+        "container",
+        "name",
+        "namespace",
+        "previous",
+        "tail"
+       ]
+      },
+      {
+       "name": "pods_run",
+       "tokens": 479,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Run"
+       },
+       "properties": [
+        "args",
+        "command",
+        "image",
+        "name",
+        "namespace",
+        "output",
+        "port",
+        "replace",
+        "restartPolicy"
+       ]
+      },
+      {
+       "name": "pods_top",
+       "tokens": 460,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Top"
+       },
+       "properties": [
+        "all_namespaces",
+        "continue",
+        "label_selector",
+        "limit",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "projects_list",
+       "tokens": 232,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Projects: List"
+       },
+       "properties": [
+        "continue",
+        "limit"
+       ]
+      },
+      {
+       "name": "resources_create_or_update",
+       "tokens": 736,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Create or Update"
+       },
+       "properties": [
+        "dry_run",
+        "force",
+        "mode",
+        "on_failure",
+        "output",
+        "resource",
+        "wait"
+       ]
+      },
+      {
+       "name": "resources_delete",
+       "tokens": 704,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Delete"
+       },
+       "properties": [
+        "apiVersion",
+        "dry_run",
+        "gracePeriodSeconds",
+        "kind",
+        "labelSelector",
+        "name",
+        "namespace",
+        "propagationPolicy",
+        "resourceVersion",
+        "uid",
+        "wait"
+       ]
+      },
+      {
+       "name": "resources_get",
+       "tokens": 399,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: Get"
+       },
+       "properties": [
+        "apiVersion",
+        "fields",
+        "kind",
+        "name",
+        "names",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_label",
+       "tokens": 474,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Label"
+       },
+       "properties": [
+        "apiVersion",
+        "dry_run",
+        "kind",
+        "labelSelector",
+        "labels",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_list",
+       "tokens": 893,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: List"
+       },
+       "properties": [
+        "all_kinds",
+        "apiVersion",
+        "continue",
+        "fieldSelector",
+        "fields",
+        "kind",
+        "kinds",
+        "labelSelector",
+        "limit",
+        "namespace",
+        "wide"
+       ]
+      },
+      {
+       "name": "resources_patch",
+       "tokens": 578,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Patch"
+       },
+       "properties": [
+        "apiVersion",
+        "kind",
+        "name",
+        "namespace",
+        "output",
+        "patch",
+        "patchType",
+        "resourceVersion"
+       ]
+      },
+      {
+       "name": "resources_rollout",
+       "tokens": 428,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Rollout"
+       },
+       "properties": [
+        "action",
+        "kind",
+        "name",
+        "namespace",
+        "to_revision",
+        "wait"
+       ]
+      },
+      {
+       "name": "resources_scale",
+       "tokens": 610,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Scale"
+       },
+       "properties": [
+        "apiVersion",
+        "dry_run",
+        "kind",
+        "labelSelector",
+        "name",
+        "namespace",
+        "output",
+        "scale",
+        "wait"
+       ]
+      }
+     ]
+    },
+    "helm": {
+     "tool_count": 28,
+     "tools_list_bytes": 50786,
+     "tools_list_tokens": 11479,
+     "instructions_tokens": 177,
+     "tools": [
+      {
+       "name": "api_resources_list",
+       "tokens": 265,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "API Resources: List by Kind"
+       },
+       "properties": [
+        "kind"
+       ]
+      },
+      {
+       "name": "auth_can_i",
+       "tokens": 426,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Auth: Can I"
+       },
+       "properties": [
+        "apiVersion",
+        "group",
+        "groups",
+        "kind",
+        "name",
+        "namespace",
+        "resource",
+        "subresource",
+        "user",
+        "verb"
+       ]
+      },
+      {
+       "name": "configuration_view",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Configuration: View"
+       },
+       "properties": [
+        "minified"
+       ]
+      },
+      {
+       "name": "events_list",
+       "tokens": 411,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Events: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "helm_install",
+       "tokens": 397,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Helm: Install"
+       },
+       "properties": [
+        "chart",
+        "name",
+        "namespace",
+        "rollback_on_failure",
+        "timeout",
+        "values",
+        "wait"
+       ]
+      },
+      {
+       "name": "helm_list",
+       "tokens": 380,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Helm: List"
+       },
+       "properties": [
+        "all_namespaces",
+        "limit",
+        "namespace",
+        "offset",
+        "states"
+       ]
+      },
+      {
+       "name": "helm_uninstall",
+       "tokens": 206,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Helm: Uninstall"
+       },
+       "properties": [
+        "name",
+        "namespace",
+        "timeout",
+        "wait"
+       ]
+      },
+      {
+       "name": "namespaces_list",
+       "tokens": 326,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Namespaces: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "nodes_log",
+       "tokens": 297,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Log"
+       },
+       "properties": [
+        "name",
+        "query",
+        "tailLines"
+       ]
+      },
+      {
+       "name": "nodes_stats_summary",
+       "tokens": 254,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Stats Summary"
+       },
+       "properties": [
+        "name"
+       ]
+      },
+      {
+       "name": "nodes_top",
+       "tokens": 359,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Nodes: Top"
+       },
+       "properties": [
+        "continue",
+        "label_selector",
+        "limit",
+        "name"
+       ]
+      },
+      {
+       "name": "pods_delete",
+       "tokens": 216,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Delete"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_exec",
+       "tokens": 301,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Exec"
+       },
+       "properties": [
+        "command",
+        "container",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_get",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Get"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_list",
+       "tokens": 525,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit",
+        "wide"
+       ]
+      },
+      {
+       "name": "pods_list_in_namespace",
+       "tokens": 551,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List in Namespace"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit",
+        "namespace",
+        "wide"
+       ]
+      },
+      {
+       "name": "pods_log",
+       "tokens": 276,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Log"
+       },
+       "properties": [
+        "container",
+        "name",
+        "namespace",
+        "previous",
+        "tail"
+       ]
+      },
+      {
+       "name": "pods_run",
+       "tokens": 479,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Run"
+       },
+       "properties": [
+        "args",
+        "command",
+        "image",
+        "name",
+        "namespace",
+        "output",
+        "port",
+        "replace",
+        "restartPolicy"
+       ]
+      },
+      {
+       "name": "pods_top",
+       "tokens": 460,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Top"
+       },
+       "properties": [
+        "all_namespaces",
+        "continue",
+        "label_selector",
+        "limit",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "projects_list",
+       "tokens": 232,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Projects: List"
+       },
+       "properties": [
+        "continue",
+        "limit"
+       ]
+      },
+      {
+       "name": "resources_create_or_update",
+       "tokens": 736,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Create or Update"
+       },
+       "properties": [
+        "dry_run",
+        "force",
+        "mode",
+        "on_failure",
+        "output",
+        "resource",
+        "wait"
+       ]
+      },
+      {
+       "name": "resources_delete",
+       "tokens": 704,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Delete"
+       },
+       "properties": [
+        "apiVersion",
+        "dry_run",
+        "gracePeriodSeconds",
+        "kind",
+        "labelSelector",
+        "name",
+        "namespace",
+        "propagationPolicy",
+        "resourceVersion",
+        "uid",
+        "wait"
+       ]
+      },
+      {
+       "name": "resources_get",
+       "tokens": 399,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: Get"
+       },
+       "properties": [
+        "apiVersion",
+        "fields",
+        "kind",
+        "name",
+        "names",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_label",
+       "tokens": 474,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Label"
+       },
+       "properties": [
+        "apiVersion",
+        "dry_run",
+        "kind",
+        "labelSelector",
+        "labels",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_list",
+       "tokens": 893,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: List"
+       },
+       "properties": [
+        "all_kinds",
+        "apiVersion",
+        "continue",
+        "fieldSelector",
+        "fields",
+        "kind",
+        "kinds",
+        "labelSelector",
+        "limit",
+        "namespace",
+        "wide"
+       ]
+      },
+      {
+       "name": "resources_patch",
+       "tokens": 578,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Patch"
+       },
+       "properties": [
+        "apiVersion",
+        "kind",
+        "name",
+        "namespace",
+        "output",
+        "patch",
+        "patchType",
+        "resourceVersion"
+       ]
+      },
+      {
+       "name": "resources_rollout",
+       "tokens": 428,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Rollout"
+       },
+       "properties": [
+        "action",
+        "kind",
+        "name",
+        "namespace",
+        "to_revision",
+        "wait"
+       ]
+      },
+      {
+       "name": "resources_scale",
+       "tokens": 610,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Scale"
+       },
+       "properties": [
+        "apiVersion",
+        "dry_run",
+        "kind",
+        "labelSelector",
+        "name",
+        "namespace",
+        "output",
+        "scale",
+        "wait"
+       ]
+      }
+     ]
+    },
+    "tekton": {
+     "tool_count": 32,
+     "tools_list_bytes": 57060,
+     "tools_list_tokens": 12875,
+     "instructions_tokens": 177,
+     "tools": [
+      {
+       "name": "api_resources_list",
+       "tokens": 265,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "API Resources: List by Kind"
+       },
+       "properties": [
+        "kind"
+       ]
+      },
+      {
+       "name": "auth_can_i",
+       "tokens": 426,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Auth: Can I"
+       },
+       "properties": [
+        "apiVersion",
+        "group",
+        "groups",
+        "kind",
+        "name",
+        "namespace",
+        "resource",
+        "subresource",
+        "user",
+        "verb"
+       ]
+      },
+      {
+       "name": "configuration_view",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Configuration: View"
+       },
+       "properties": [
+        "minified"
+       ]
+      },
+      {
+       "name": "events_list",
+       "tokens": 411,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Events: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "namespaces_list",
+       "tokens": 326,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Namespaces: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "nodes_log",
+       "tokens": 297,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Log"
+       },
+       "properties": [
+        "name",
+        "query",
+        "tailLines"
+       ]
+      },
+      {
+       "name": "nodes_stats_summary",
+       "tokens": 254,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Stats Summary"
+       },
+       "properties": [
+        "name"
+       ]
+      },
+      {
+       "name": "nodes_top",
+       "tokens": 359,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Nodes: Top"
+       },
+       "properties": [
+        "continue",
+        "label_selector",
+        "limit",
+        "name"
+       ]
+      },
+      {
+       "name": "pods_delete",
+       "tokens": 216,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Delete"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_exec",
+       "tokens": 301,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Exec"
+       },
+       "properties": [
+        "command",
+        "container",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_get",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Get"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_list",
+       "tokens": 525,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit",
+        "wide"
+       ]
+      },
+      {
+       "name": "pods_list_in_namespace",
+       "tokens": 551,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List in Namespace"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit",
+        "namespace",
+        "wide"
+       ]
+      },
+      {
+       "name": "pods_log",
+       "tokens": 276,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Log"
+       },
+       "properties": [
+        "container",
+        "name",
+        "namespace",
+        "previous",
+        "tail"
+       ]
+      },
+      {
+       "name": "pods_run",
+       "tokens": 479,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Run"
+       },
+       "properties": [
+        "args",
+        "command",
+        "image",
+        "name",
+        "namespace",
+        "output",
+        "port",
+        "replace",
+        "restartPolicy"
+       ]
+      },
+      {
+       "name": "pods_top",
+       "tokens": 460,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Top"
+       },
+       "properties": [
+        "all_namespaces",
+        "continue",
+        "label_selector",
+        "limit",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "projects_list",
+       "tokens": 232,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Projects: List"
+       },
+       "properties": [
+        "continue",
+        "limit"
+       ]
+      },
+      {
+       "name": "resources_create_or_update",
+       "tokens": 736,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Create or Update"
+       },
+       "properties": [
+        "dry_run",
+        "force",
+        "mode",
+        "on_failure",
+        "output",
+        "resource",
+        "wait"
+       ]
+      },
+      {
+       "name": "resources_delete",
+       "tokens": 704,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Delete"
+       },
+       "properties": [
+        "apiVersion",
+        "dry_run",
+        "gracePeriodSeconds",
+        "kind",
+        "labelSelector",
+        "name",
+        "namespace",
+        "propagationPolicy",
+        "resourceVersion",
+        "uid",
+        "wait"
+       ]
+      },
+      {
+       "name": "resources_get",
+       "tokens": 399,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: Get"
+       },
+       "properties": [
+        "apiVersion",
+        "fields",
+        "kind",
+        "name",
+        "names",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_label",
+       "tokens": 474,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Label"
+       },
+       "properties": [
+        "apiVersion",
+        "dry_run",
+        "kind",
+        "labelSelector",
+        "labels",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_list",
+       "tokens": 893,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: List"
+       },
+       "properties": [
+        "all_kinds",
+        "apiVersion",
+        "continue",
+        "fieldSelector",
+        "fields",
+        "kind",
+        "kinds",
+        "labelSelector",
+        "limit",
+        "namespace",
+        "wide"
+       ]
+      },
+      {
+       "name": "resources_patch",
+       "tokens": 578,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Patch"
+       },
+       "properties": [
+        "apiVersion",
+        "kind",
+        "name",
+        "namespace",
+        "output",
+        "patch",
+        "patchType",
+        "resourceVersion"
+       ]
+      },
+      {
+       "name": "resources_rollout",
+       "tokens": 428,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Rollout"
+       },
+       "properties": [
+        "action",
+        "kind",
+        "name",
+        "namespace",
+        "to_revision",
+        "wait"
+       ]
+      },
+      {
+       "name": "resources_scale",
+       "tokens": 610,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Scale"
+       },
+       "properties": [
+        "apiVersion",
+        "dry_run",
+        "kind",
+        "labelSelector",
+        "name",
+        "namespace",
+        "output",
+        "scale",
+        "wait"
+       ]
+      },
+      {
+       "name": "tekton_pipeline_start",
+       "tokens": 261,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Tekton: Start Pipeline"
+       },
+       "properties": [
+        "name",
+        "namespace",
+        "params"
+       ]
+      },
+      {
+       "name": "tekton_pipelinerun_diagnose",
+       "tokens": 777,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "PipelineRun: Diagnose"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "tekton_pipelinerun_lifecycle",
+       "tokens": 292,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Tekton: PipelineRun Lifecycle"
+       },
+       "properties": [
+        "action",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "tekton_pipelinerun_logs",
+       "tokens": 324,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Tekton: Get PipelineRun Logs"
+       },
+       "properties": [
+        "name",
+        "namespace",
+        "step",
+        "tail",
+        "task"
+       ]
+      },
+      {
+       "name": "tekton_task_start",
+       "tokens": 258,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Tekton: Start Task"
+       },
+       "properties": [
+        "name",
+        "namespace",
+        "params"
+       ]
+      },
+      {
+       "name": "tekton_taskrun_logs",
+       "tokens": 266,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Tekton: Get TaskRun Logs"
+       },
+       "properties": [
+        "name",
+        "namespace",
+        "step",
+        "tail"
+       ]
+      },
+      {
+       "name": "tekton_taskrun_restart",
+       "tokens": 205,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Tekton: Restart TaskRun"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      }
+     ]
+    },
+    "kubevirt": {
+     "tool_count": 32,
+     "tools_list_bytes": 61221,
+     "tools_list_tokens": 13710,
+     "instructions_tokens": 177,
+     "tools": [
+      {
+       "name": "api_resources_list",
+       "tokens": 265,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "API Resources: List by Kind"
+       },
+       "properties": [
+        "kind"
+       ]
+      },
+      {
+       "name": "auth_can_i",
+       "tokens": 426,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Auth: Can I"
+       },
+       "properties": [
+        "apiVersion",
+        "group",
+        "groups",
+        "kind",
+        "name",
+        "namespace",
+        "resource",
+        "subresource",
+        "user",
+        "verb"
+       ]
+      },
+      {
+       "name": "configuration_view",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Configuration: View"
+       },
+       "properties": [
+        "minified"
+       ]
+      },
+      {
+       "name": "events_list",
+       "tokens": 411,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Events: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "namespaces_list",
+       "tokens": 326,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Namespaces: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "nodes_log",
+       "tokens": 297,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Log"
+       },
+       "properties": [
+        "name",
+        "query",
+        "tailLines"
+       ]
+      },
+      {
+       "name": "nodes_stats_summary",
+       "tokens": 254,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Stats Summary"
+       },
+       "properties": [
+        "name"
+       ]
+      },
+      {
+       "name": "nodes_top",
+       "tokens": 359,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Nodes: Top"
+       },
+       "properties": [
+        "continue",
+        "label_selector",
+        "limit",
+        "name"
+       ]
+      },
+      {
+       "name": "pods_delete",
+       "tokens": 216,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Delete"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_exec",
+       "tokens": 301,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Exec"
+       },
+       "properties": [
+        "command",
+        "container",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_get",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Get"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_list",
+       "tokens": 525,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit",
+        "wide"
+       ]
+      },
+      {
+       "name": "pods_list_in_namespace",
+       "tokens": 551,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List in Namespace"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit",
+        "namespace",
+        "wide"
+       ]
+      },
+      {
+       "name": "pods_log",
+       "tokens": 276,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Log"
+       },
+       "properties": [
+        "container",
+        "name",
+        "namespace",
+        "previous",
+        "tail"
+       ]
+      },
+      {
+       "name": "pods_run",
+       "tokens": 479,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Pods: Run"
+       },
+       "properties": [
+        "args",
+        "command",
+        "image",
+        "name",
+        "namespace",
+        "output",
+        "port",
+        "replace",
+        "restartPolicy"
+       ]
+      },
+      {
+       "name": "pods_top",
+       "tokens": 460,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Top"
+       },
+       "properties": [
+        "all_namespaces",
+        "continue",
+        "label_selector",
+        "limit",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "projects_list",
+       "tokens": 232,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Projects: List"
+       },
+       "properties": [
+        "continue",
+        "limit"
+       ]
+      },
+      {
+       "name": "resources_create_or_update",
+       "tokens": 736,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Create or Update"
+       },
+       "properties": [
+        "dry_run",
+        "force",
+        "mode",
+        "on_failure",
+        "output",
+        "resource",
+        "wait"
+       ]
+      },
+      {
+       "name": "resources_delete",
+       "tokens": 704,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Delete"
+       },
+       "properties": [
+        "apiVersion",
+        "dry_run",
+        "gracePeriodSeconds",
+        "kind",
+        "labelSelector",
+        "name",
+        "namespace",
+        "propagationPolicy",
+        "resourceVersion",
+        "uid",
+        "wait"
+       ]
+      },
+      {
+       "name": "resources_get",
+       "tokens": 399,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: Get"
+       },
+       "properties": [
+        "apiVersion",
+        "fields",
+        "kind",
+        "name",
+        "names",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_label",
+       "tokens": 474,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Label"
+       },
+       "properties": [
+        "apiVersion",
+        "dry_run",
+        "kind",
+        "labelSelector",
+        "labels",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_list",
+       "tokens": 893,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: List"
+       },
+       "properties": [
+        "all_kinds",
+        "apiVersion",
+        "continue",
+        "fieldSelector",
+        "fields",
+        "kind",
+        "kinds",
+        "labelSelector",
+        "limit",
+        "namespace",
+        "wide"
+       ]
+      },
+      {
+       "name": "resources_patch",
+       "tokens": 578,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Patch"
+       },
+       "properties": [
+        "apiVersion",
+        "kind",
+        "name",
+        "namespace",
+        "output",
+        "patch",
+        "patchType",
+        "resourceVersion"
+       ]
+      },
+      {
+       "name": "resources_rollout",
+       "tokens": 428,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Rollout"
+       },
+       "properties": [
+        "action",
+        "kind",
+        "name",
+        "namespace",
+        "to_revision",
+        "wait"
+       ]
+      },
+      {
+       "name": "resources_scale",
+       "tokens": 610,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Resources: Scale"
+       },
+       "properties": [
+        "apiVersion",
+        "dry_run",
+        "kind",
+        "labelSelector",
+        "name",
+        "namespace",
+        "output",
+        "scale",
+        "wait"
+       ]
+      },
+      {
+       "name": "vm_clone",
+       "tokens": 215,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Virtual Machine: Clone"
+       },
+       "properties": [
+        "name",
+        "namespace",
+        "targetName"
+       ]
+      },
+      {
+       "name": "vm_console_screenshot",
+       "tokens": 271,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Virtual Machine: Console Screenshot"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "vm_create",
+       "tokens": 933,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Virtual Machine: Create"
+       },
+       "properties": [
+        "autostart",
+        "instancetype",
+        "name",
+        "namespace",
+        "networks",
+        "performance",
+        "preference",
+        "size",
+        "storage",
+        "workload"
+       ]
+      },
+      {
+       "name": "vm_create_from_template",
+       "tokens": 318,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Virtual Machine: Create from Template"
+       },
+       "properties": [
+        "namespace",
+        "parameters",
+        "template_name"
+       ]
+      },
+      {
+       "name": "vm_guest_info",
+       "tokens": 466,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Virtual Machine: Guest Agent Info"
+       },
+       "properties": [
+        "info_type",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "vm_lifecycle",
+       "tokens": 451,
+       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Virtual Machine: Lifecycle"
+       },
+       "properties": [
+        "action",
+        "name",
+        "namespace",
+        "run_policy"
+       ]
+      },
+      {
+       "name": "vm_troubleshoot",
+       "tokens": 564,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Virtual Machine: Troubleshoot"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      }
+     ]
+    },
+    "disable_destructive": {
+     "tool_count": 16,
+     "tools_list_bytes": 26140,
+     "tools_list_tokens": 5982,
+     "instructions_tokens": 177,
+     "tools": [
+      {
+       "name": "api_resources_list",
+       "tokens": 265,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "API Resources: List by Kind"
+       },
+       "properties": [
+        "kind"
+       ]
+      },
+      {
+       "name": "auth_can_i",
+       "tokens": 426,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Auth: Can I"
+       },
+       "properties": [
+        "apiVersion",
+        "group",
+        "groups",
+        "kind",
+        "name",
+        "namespace",
+        "resource",
+        "subresource",
+        "user",
+        "verb"
+       ]
+      },
+      {
+       "name": "configuration_view",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Configuration: View"
+       },
+       "properties": [
+        "minified"
+       ]
+      },
+      {
+       "name": "events_list",
+       "tokens": 411,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Events: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit",
+        "namespace"
+       ]
+      },
+      {
+       "name": "namespaces_list",
+       "tokens": 326,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Namespaces: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "limit"
+       ]
+      },
+      {
+       "name": "nodes_log",
+       "tokens": 297,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Log"
+       },
+       "properties": [
+        "name",
+        "query",
+        "tailLines"
+       ]
+      },
+      {
+       "name": "nodes_stats_summary",
+       "tokens": 254,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Node: Stats Summary"
+       },
+       "properties": [
+        "name"
+       ]
+      },
+      {
+       "name": "nodes_top",
+       "tokens": 359,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Nodes: Top"
+       },
+       "properties": [
+        "continue",
+        "label_selector",
+        "limit",
+        "name"
+       ]
+      },
+      {
+       "name": "pods_get",
+       "tokens": 160,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Get"
+       },
+       "properties": [
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "pods_list",
+       "tokens": 525,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit",
+        "wide"
+       ]
+      },
+      {
+       "name": "pods_list_in_namespace",
+       "tokens": 551,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: List in Namespace"
+       },
+       "properties": [
+        "continue",
+        "fieldSelector",
+        "labelSelector",
+        "limit",
+        "namespace",
+        "wide"
+       ]
+      },
+      {
+       "name": "pods_log",
+       "tokens": 276,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Log"
+       },
+       "properties": [
+        "container",
+        "name",
+        "namespace",
+        "previous",
+        "tail"
+       ]
+      },
+      {
+       "name": "pods_top",
+       "tokens": 460,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Pods: Top"
+       },
+       "properties": [
+        "all_namespaces",
+        "continue",
+        "label_selector",
+        "limit",
+        "name",
+        "namespace"
+       ]
+      },
+      {
+       "name": "projects_list",
+       "tokens": 232,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Projects: List"
+       },
+       "properties": [
+        "continue",
+        "limit"
+       ]
+      },
+      {
+       "name": "resources_get",
+       "tokens": 399,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: Get"
+       },
+       "properties": [
+        "apiVersion",
+        "fields",
+        "kind",
+        "name",
+        "names",
+        "namespace"
+       ]
+      },
+      {
+       "name": "resources_list",
+       "tokens": 893,
+       "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true,
+        "title": "Resources: List"
+       },
+       "properties": [
+        "all_kinds",
+        "apiVersion",
+        "continue",
+        "fieldSelector",
+        "fields",
+        "kind",
+        "kinds",
+        "labelSelector",
+        "limit",
+        "namespace",
+        "wide"
+       ]
+      }
+     ]
+    }
+   }
+  }
+ }
+}
