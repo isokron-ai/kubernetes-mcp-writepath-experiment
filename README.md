@@ -1,3 +1,12 @@
+> **Kubernetes MCP server write-path experiment (unofficial).** This repository is an independent research build by
+> [IsoKron](https://isokron.ai) based on `containers/kubernetes-mcp-server` v0.1.2 (commit `66553fed`), with 16 bug-fix
+> patches for 17 bugs (reported upstream as #1658 to #1672 and a comment on #1584) and 19 usability changes. It is not affiliated with or
+> endorsed by the kubernetes-mcp-server maintainers or Red Hat and is not a supported distribution. On six pre-registered
+> tasks the research build completed 30 of 30 runs, as v0.1.2 did, at 37.0% lower expected cost per verified success and
+> with 59.2% fewer tool calls per run (Claude Opus 5.5, 5 runs per task and build); expected tokens were 3.3% lower.
+> Read [EXPERIMENT.md](EXPERIMENT.md) first; the findings are in [FINDINGS.md](FINDINGS.md); the upstream README follows
+> unchanged.
+
 # Kubernetes MCP Server
 
 [![GitHub License](https://img.shields.io/github/license/containers/kubernetes-mcp-server)](https://github.com/containers/kubernetes-mcp-server/blob/main/LICENSE)

@@ -1,0 +1,16 @@
+kubernetes-mcp-writepath-experiment
+
+Based on containers/kubernetes-mcp-server (https://github.com/containers/kubernetes-mcp-server), tag v0.1.2, commit
+66553fed5c16454e5814b41e331b4357f15806d8, licensed under the Apache License, Version 2.0 (see LICENSE). Upstream ships
+no NOTICE file. Copyright of the upstream code remains with its authors. Third-party components keep their own
+licenses.
+
+Modifications: the experiment commits on top of v0.1.2 (the bug-fix and usability series, also as patch files in
+experiment-patches/) change upstream files; CHANGES-EXPERIMENT.md lists every changed file with its commit, and the git
+history records each change. The upstream .github/ directory (CI workflows, Dependabot, CODEOWNERS) was removed.
+
+The experiment commits, the patch series, the build script and benchmark files in harness/, and the documentation and
+results are by IsoKron (Stormhaven Enterprises LLC), https://isokron.ai, released under the Apache License, Version 2.0.
+
+Not affiliated with, sponsored by, or endorsed by the kubernetes-mcp-server maintainers or Red Hat. Names of upstream
+projects are used only to identify them.
