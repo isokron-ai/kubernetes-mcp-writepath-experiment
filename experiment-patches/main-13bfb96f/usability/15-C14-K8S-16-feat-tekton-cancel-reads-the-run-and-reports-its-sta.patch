@@ -1,0 +1,220 @@
+From c183c9b41bb21c63785092cb066a002a92f6d4d6 Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 12:45:04 -0700
+Subject: [PATCH 15/19] feat(tekton): cancel reads the run and reports its
+ state; restart keeps the run's labels and annotations (C14, K8S-16)
+
+tekton_pipelinerun_lifecycle's cancel patched spec.status=Cancelled
+without looking at the run and answered "PipelineRun '<name>'
+cancelled". For a finished run Tekton's webhook refuses the patch (H-08
+did not reproduce because of that), and for a running run the answer
+claimed a state Tekton had not reached yet; on the native session
+(job 11) the agent spent a read to find out what had happened.
+
+- cancel reads the run first. A run whose Succeeded condition is True or
+  False has finished: the answer says so with its reason ("Failed",
+  "Succeeded") and nothing is changed. Otherwise spec.status is patched
+  and the answer says a cancellation was requested and what Tekton
+  does next (C14).
+- restart (PipelineRun and TaskRun) copied only the spec, so labels and
+  annotations set on the run itself (for example Tekton Triggers'
+  eventlistener labels, or a team annotation) were lost (K8S-16, as
+  narrowed by the refuter). They are now copied, except Tekton's own
+  tekton.dev/ keys, which Tekton sets again from the Pipeline or Task,
+  and kubectl's last-applied annotation.
+
+The shared PipelineRun fixture is a failed run; the existing cancel
+test now creates a running run, and a new test checks that a finished
+run is left alone. Tool descriptions say what each action does now.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ pkg/mcp/tekton_test.go                      | 52 ++++++++++++++++++++-
+ pkg/mcp/testdata/toolsets-tekton-tools.json |  2 +-
+ pkg/toolsets/tekton/pipelinerun.go          | 47 ++++++++++++++++++-
+ pkg/toolsets/tekton/taskrun.go              |  2 +
+ 4 files changed, 99 insertions(+), 4 deletions(-)
+
+diff --git a/pkg/mcp/tekton_test.go b/pkg/mcp/tekton_test.go
+index 97f8394..00bd7ef 100644
+--- a/pkg/mcp/tekton_test.go
++++ b/pkg/mcp/tekton_test.go
+@@ -75,7 +75,17 @@ func (s *TektonMcpSuite) TearDownTest() {
+ 
+ func (s *TektonMcpSuite) TestPipelineRunLifecycle() {
+ 	s.Run("cancel", func() {
+-		s.createPipelineRun("cancel-me")
++		// a running run: Succeeded is Unknown until it finishes (the shared fixture is a failed run)
++		_, err := s.dynamic.Resource(tektonTestPipelineRunGVR).Namespace(s.namespace).Create(s.T().Context(), &unstructured.Unstructured{Object: map[string]interface{}{
++			"apiVersion": "tekton.dev/v1",
++			"kind":       "PipelineRun",
++			"metadata":   map[string]interface{}{"name": "cancel-me", "namespace": s.namespace},
++			"spec":       map[string]interface{}{"pipelineRef": map[string]interface{}{"name": "demo-pipeline"}},
++			"status": map[string]interface{}{"conditions": []interface{}{map[string]interface{}{
++				"type": "Succeeded", "status": "Unknown", "reason": "Running",
++			}}},
++		}}, metav1.CreateOptions{})
++		s.Require().NoError(err)
+ 
+ 		toolResult, err := s.CallTool("tekton_pipelinerun_lifecycle", map[string]interface{}{
+ 			"namespace": s.namespace,
+@@ -91,6 +101,46 @@ func (s *TektonMcpSuite) TestPipelineRunLifecycle() {
+ 		s.Equal("Cancelled", status)
+ 	})
+ 
++	s.Run("cancel of a finished run changes nothing and says so", func() {
++		s.createPipelineRun("already-failed")
++		toolResult, err := s.CallTool("tekton_pipelinerun_lifecycle", map[string]interface{}{
++			"namespace": s.namespace, "name": "already-failed", "action": "cancel",
++		})
++		s.Require().NoError(err)
++		s.False(toolResult.IsError)
++		s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "has already finished (Failed); nothing was changed")
++		pipelineRun, err := s.dynamic.Resource(tektonTestPipelineRunGVR).Namespace(s.namespace).Get(s.T().Context(), "already-failed", metav1.GetOptions{})
++		s.Require().NoError(err)
++		status, _, _ := unstructured.NestedString(pipelineRun.Object, "spec", "status")
++		s.Empty(status)
++	})
++
++	s.Run("restart keeps the labels and annotations set on the run", func() {
++		s.createPipelineRun("restart-labelled")
++		original, err := s.dynamic.Resource(tektonTestPipelineRunGVR).Namespace(s.namespace).Get(s.T().Context(), "restart-labelled", metav1.GetOptions{})
++		s.Require().NoError(err)
++		original.SetLabels(map[string]string{"triggers.tekton.dev/eventlistener": "github", "tekton.dev/pipeline": "demo-pipeline"})
++		original.SetAnnotations(map[string]string{"team": "payments"})
++		_, err = s.dynamic.Resource(tektonTestPipelineRunGVR).Namespace(s.namespace).Update(s.T().Context(), original, metav1.UpdateOptions{})
++		s.Require().NoError(err)
++		toolResult, err := s.CallTool("tekton_pipelinerun_lifecycle", map[string]interface{}{
++			"namespace": s.namespace, "name": "restart-labelled", "action": "restart",
++		})
++		s.Require().NoError(err)
++		s.Require().False(toolResult.IsError)
++		list, err := s.dynamic.Resource(tektonTestPipelineRunGVR).Namespace(s.namespace).List(s.T().Context(), metav1.ListOptions{LabelSelector: "triggers.tekton.dev/eventlistener=github"})
++		s.Require().NoError(err)
++		var restarted *unstructured.Unstructured
++		for i := range list.Items {
++			if list.Items[i].GetName() != "restart-labelled" {
++				restarted = &list.Items[i]
++			}
++		}
++		s.Require().NotNil(restarted, "the restarted run must keep the run's own labels")
++		s.Equal("payments", restarted.GetAnnotations()["team"])
++		s.NotContains(restarted.GetLabels(), "tekton.dev/pipeline", "Tekton sets its own labels again")
++	})
++
+ 	s.Run("restart", func() {
+ 		s.createPipelineRun("restart-me")
+ 
+diff --git a/pkg/mcp/testdata/toolsets-tekton-tools.json b/pkg/mcp/testdata/toolsets-tekton-tools.json
+index bab3391..4682426 100644
+--- a/pkg/mcp/testdata/toolsets-tekton-tools.json
++++ b/pkg/mcp/testdata/toolsets-tekton-tools.json
+@@ -446,7 +446,7 @@
+     "inputSchema": {
+       "properties": {
+         "action": {
+-          "description": "Lifecycle action to perform: 'restart' creates a new PipelineRun with the same spec; 'cancel' sets spec.status to Cancelled.",
++          "description": "Lifecycle action to perform: 'restart' creates a new PipelineRun with the same spec and the run's own labels and annotations; 'cancel' sets spec.status to Cancelled on a run that is still running (a finished run is reported and left unchanged).",
+           "enum": [
+             "restart",
+             "cancel"
+diff --git a/pkg/toolsets/tekton/pipelinerun.go b/pkg/toolsets/tekton/pipelinerun.go
+index c90d364..24229fd 100644
+--- a/pkg/toolsets/tekton/pipelinerun.go
++++ b/pkg/toolsets/tekton/pipelinerun.go
+@@ -3,6 +3,7 @@ package tekton
+ import (
+ 	"context"
+ 	"fmt"
++	"strings"
+ 
+ 	"github.com/containers/kubernetes-mcp-server/pkg/api"
+ 	"github.com/containers/kubernetes-mcp-server/pkg/kubernetes"
+@@ -134,7 +135,7 @@ func pipelineRunLifecycleSchema() *jsonschema.Schema {
+ 			"action": {
+ 				Type:        "string",
+ 				Enum:        []any{string(pipelineRunActionRestart), string(pipelineRunActionCancel)},
+-				Description: "Lifecycle action to perform: 'restart' creates a new PipelineRun with the same spec; 'cancel' sets spec.status to Cancelled.",
++				Description: "Lifecycle action to perform: 'restart' creates a new PipelineRun with the same spec and the run's own labels and annotations; 'cancel' sets spec.status to Cancelled on a run that is still running (a finished run is reported and left unchanged).",
+ 			},
+ 		},
+ 		Required: []string{"name", "action"},
+@@ -154,11 +155,20 @@ func pipelineRunLifecycle(params api.ToolHandlerParams) (*api.ToolCallResult, er
+ 	case pipelineRunActionRestart:
+ 		return restartPipelineRun(params.Context, params.DynamicClient(), namespace, name)
+ 	case pipelineRunActionCancel:
++		// Read the run first: a finished run cannot be cancelled, and the answer should
++		// say what state the run is in rather than claim a cancellation.
++		current, err := params.DynamicClient().Resource(pipelineRunGVR).Namespace(namespace).Get(params.Context, name, metav1.GetOptions{})
++		if err != nil {
++			return api.NewToolCallResult("", fmt.Errorf("failed to cancel PipelineRun %s/%s: %w", namespace, name, err)), nil
++		}
++		if done, state := runFinished(current); done {
++			return api.NewToolCallResult(fmt.Sprintf("PipelineRun '%s' in namespace '%s' has already finished (%s); nothing was changed", name, namespace, state), nil), nil
++		}
+ 		patch := []byte(fmt.Sprintf(`{"spec":{"status":%q}}`, tektonv1.PipelineRunSpecStatusCancelled))
+ 		if _, err := params.DynamicClient().Resource(pipelineRunGVR).Namespace(namespace).Patch(params.Context, name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+ 			return api.NewToolCallResult("", fmt.Errorf("failed to cancel PipelineRun %s/%s: %w", namespace, name, err)), nil
+ 		}
+-		return api.NewToolCallResult(fmt.Sprintf("PipelineRun '%s' cancelled in namespace '%s'", name, namespace), nil), nil
++		return api.NewToolCallResult(fmt.Sprintf("PipelineRun '%s' in namespace '%s': cancellation requested (spec.status=Cancelled); Tekton stops its TaskRuns and then marks it Cancelled", name, namespace), nil), nil
+ 	default:
+ 		return api.NewToolCallResult("", fmt.Errorf("invalid action %q: must be one of %q or %q", action, pipelineRunActionRestart, pipelineRunActionCancel)), nil
+ 	}
+@@ -184,6 +194,8 @@ func restartPipelineRun(ctx context.Context, dynamicClient dynamic.Interface, na
+ 		ObjectMeta: metav1.ObjectMeta{
+ 			Namespace:    namespace,
+ 			GenerateName: name + "-",
++			Labels:       copyRunMetadata(existing.Labels),
++			Annotations:  copyRunMetadata(existing.Annotations),
+ 		},
+ 		Spec: existing.Spec,
+ 	}
+@@ -276,3 +288,34 @@ func pipelineRunTaskRuns(ctx context.Context, dynamicClient dynamic.Interface, n
+ 	}
+ 	return taskRuns, list.GetContinue(), nil
+ }
++
++// copyRunMetadata keeps the labels and annotations set on the run itself (for example
++// by Tekton Triggers or the user) for its restart. Tekton's own tekton.dev/ keys are left
++// out: Tekton sets them again from the Pipeline or Task. kubectl's last-applied
++// annotation is left out too.
++func copyRunMetadata(in map[string]string) map[string]string {
++	out := map[string]string{}
++	for k, v := range in {
++		if strings.HasPrefix(k, "tekton.dev/") || k == "kubectl.kubernetes.io/last-applied-configuration" {
++			continue
++		}
++		out[k] = v
++	}
++	if len(out) == 0 {
++		return nil
++	}
++	return out
++}
++
++// runFinished reports whether a PipelineRun or TaskRun has a Succeeded condition that
++// is True or False (finished), and the condition's reason.
++func runFinished(run *unstructured.Unstructured) (bool, string) {
++	conditions, _, _ := unstructured.NestedSlice(run.Object, "status", "conditions")
++	for _, c := range conditions {
++		m, _ := c.(map[string]any)
++		if m["type"] == "Succeeded" && (m["status"] == "True" || m["status"] == "False") {
++			return true, fmt.Sprintf("%v", m["reason"])
++		}
++	}
++	return false, ""
++}
+diff --git a/pkg/toolsets/tekton/taskrun.go b/pkg/toolsets/tekton/taskrun.go
+index 5cba17d..9585261 100644
+--- a/pkg/toolsets/tekton/taskrun.go
++++ b/pkg/toolsets/tekton/taskrun.go
+@@ -143,6 +143,8 @@ func restartTaskRun(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 		ObjectMeta: metav1.ObjectMeta{
+ 			Namespace:    namespace,
+ 			GenerateName: name + "-",
++			Labels:       copyRunMetadata(existing.Labels),
++			Annotations:  copyRunMetadata(existing.Annotations),
+ 		},
+ 		Spec: existing.Spec,
+ 	}

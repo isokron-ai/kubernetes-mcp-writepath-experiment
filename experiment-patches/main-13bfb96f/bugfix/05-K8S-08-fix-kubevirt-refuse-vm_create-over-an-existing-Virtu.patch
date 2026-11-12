@@ -1,0 +1,124 @@
+From 46f1e9bfc93c0d4d8c9754c5ef9d20967585e358 Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 11:29:40 -0700
+Subject: [PATCH 05/14] fix(kubevirt): refuse vm_create over an existing
+ VirtualMachine
+
+vm_create renders a VirtualMachine and force-applies it. Given the name
+of a VM that already exists, the apply replaced its run strategy (a
+running VM became Halted), disks, volumes and memory, kept its uid, and
+the tool answered "VirtualMachine created successfully". A POST of the
+same object is refused with 409 AlreadyExists.
+
+The tool's annotations (destructive, idempotent) and its RBAC metadata
+(patch only) suggest the upsert itself may be deliberate at catalog
+level; nothing suggests that silently rewriting an existing VM under a
+"created" message is. vm_create now reads the VirtualMachine first and,
+if it exists, returns an error that names it with its uid and run
+strategy and points to vm_lifecycle or resources_create_or_update for
+changes. A read error other than NotFound is returned as such. The tool
+declares the extra get verb in its RBAC metadata.
+
+The check and the apply are two requests, so a VM created by someone
+else in between can still be applied over; closing that window needs a
+create (POST) instead of an apply, which changes the tool's declared
+verbs and is left for review.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+(cherry picked from commit 4b00ba93d1277b1ace9317c09ae93e9eeabe5d47)
+---
+ pkg/mcp/kubevirt_test.go                      | 24 +++++++++++++++++++
+ pkg/mcp/testdata/toolsets-kubevirt-tools.json |  1 +
+ pkg/toolsets/kubevirt/vm/create/tool.go       | 18 +++++++++++++-
+ 3 files changed, 42 insertions(+), 1 deletion(-)
+
+diff --git a/pkg/mcp/kubevirt_test.go b/pkg/mcp/kubevirt_test.go
+index 180a0b0..24783b4 100644
+--- a/pkg/mcp/kubevirt_test.go
++++ b/pkg/mcp/kubevirt_test.go
+@@ -117,6 +117,30 @@ func (s *KubevirtSuite) TestCreate() {
+ 			s.Equal("Halted", test.FieldString(vm, "spec.runStrategy"), "invalid default runStrategy")
+ 		})
+ 	})
++	s.Run("vm_create with the name of an existing VirtualMachine", func() {
++		first, err := s.CallTool("vm_create", map[string]interface{}{"name": "test-vm-exists", "namespace": "default"})
++		s.Require().NoError(err)
++		s.Require().Falsef(first.IsError, "first call failed: %v", first.Content)
++		second, err := s.CallTool("vm_create", map[string]interface{}{
++			"name":      "test-vm-exists",
++			"namespace": "default",
++			"workload":  "ubuntu",
++			"autostart": true,
++		})
++		s.Require().NoError(err)
++		s.Run("returns an error naming the existing VM", func() {
++			s.True(second.IsError, "vm_create must not report success over an existing VM")
++			s.Contains(second.Content[0].(*mcp.TextContent).Text, "VirtualMachine default/test-vm-exists already exists")
++		})
++		s.Run("leaves the existing VM unchanged", func() {
++			dynamicClient := dynamic.NewForConfigOrDie(test.EnvTestRestConfig())
++			vm, getErr := dynamicClient.Resource(schema.GroupVersionResource{Group: "kubevirt.io", Version: "v1", Resource: "virtualmachines"}).
++				Namespace("default").Get(s.T().Context(), "test-vm-exists", metav1.GetOptions{})
++			s.Require().NoError(getErr)
++			s.Equal("Halted", test.FieldString(vm, "spec.runStrategy"))
++			s.Equal("quay.io/containerdisks/fedora:latest", test.FieldString(vm, "spec.template.spec.volumes[0].containerDisk.image"))
++		})
++	})
+ 	s.Run("vm_create(workload=ubuntu, instancetype=u1.medium) with instancetype", func() {
+ 		toolResult, err := s.CallTool("vm_create", map[string]interface{}{
+ 			"name":         "test-vm-2",
+diff --git a/pkg/mcp/testdata/toolsets-kubevirt-tools.json b/pkg/mcp/testdata/toolsets-kubevirt-tools.json
+index 05331e1..0cbe943 100644
+--- a/pkg/mcp/testdata/toolsets-kubevirt-tools.json
++++ b/pkg/mcp/testdata/toolsets-kubevirt-tools.json
+@@ -212,6 +212,7 @@
+                 }
+               },
+               "verbs": [
++                "get",
+                 "patch"
+               ]
+             }
+diff --git a/pkg/toolsets/kubevirt/vm/create/tool.go b/pkg/toolsets/kubevirt/vm/create/tool.go
+index e324f9d..d011ece 100644
+--- a/pkg/toolsets/kubevirt/vm/create/tool.go
++++ b/pkg/toolsets/kubevirt/vm/create/tool.go
+@@ -12,6 +12,9 @@ import (
+ 	"github.com/containers/kubernetes-mcp-server/pkg/output"
+ 	"github.com/containers/kubernetes-mcp-server/pkg/toolsets/kubevirt/internal/defaults"
+ 	"github.com/google/jsonschema-go/jsonschema"
++	apierrors "k8s.io/apimachinery/pkg/api/errors"
++	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
++	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+ 	"k8s.io/utils/ptr"
+ )
+ 
+@@ -135,7 +138,7 @@ func Tools(inspector api.ClusterInspector) []api.ServerTool {
+ 					Namespace: &api.RBACNamespace{Argument: "namespace"},
+ 				},
+ 				api.RBACRequirement{
+-					Verbs:        []string{"patch"},
++					Verbs:        []string{"get", "patch"},
+ 					Target:       api.RBACTarget{Resource: &api.RBACResourceTarget{APIGroup: "kubevirt.io", Resource: "virtualmachines"}},
+ 					Namespace:    &api.RBACNamespace{Argument: "namespace"},
+ 					ResourceName: &api.RBACResourceName{Argument: "name"},
+@@ -180,6 +183,19 @@ func create(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 
+ 	dynamicClient := params.DynamicClient()
+ 
++	// vm_create only creates: applying over an existing VirtualMachine would replace its
++	// run strategy, disks and volumes and still report "created".
++	existing, err := dynamicClient.Resource(kubevirt.VirtualMachineGVR).Namespace(createParams.Namespace).
++		Get(params.Context, createParams.Name, metav1.GetOptions{})
++	if err == nil {
++		runStrategy, _, _ := unstructured.NestedString(existing.Object, "spec", "runStrategy")
++		return api.NewToolCallResult("", fmt.Errorf(
++			"VirtualMachine %s/%s already exists (uid %s, runStrategy %s); vm_create does not modify existing VMs: choose another name, or use vm_lifecycle or resources_create_or_update to change it",
++			createParams.Namespace, createParams.Name, existing.GetUID(), runStrategy)), nil
++	} else if !apierrors.IsNotFound(err) {
++		return api.NewToolCallResult("", fmt.Errorf("failed to check whether VirtualMachine %s/%s exists: %w", createParams.Namespace, createParams.Name, err)), nil
++	}
++
+ 	// Search for available DataSources
+ 	dataSources := kubevirt.SearchDataSources(params.Context, dynamicClient)
+ 

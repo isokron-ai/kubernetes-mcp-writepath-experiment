@@ -1,0 +1,246 @@
+From 91fd541144d37ee301d714ae24ac8ffda3800197 Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 11:42:29 -0700
+Subject: [PATCH 10/14] fix(core): return pods_exec output when the command
+ exits non-zero
+
+When the executed command exited with a non-zero code, pods_exec
+discarded everything it had captured and returned only "failed to exec
+in pod <p> in namespace <ns>: command terminated with exit code N". The
+output that explains the failure (kubectl exec prints both streams and
+exits with the same code) was lost.
+
+execOutput.finish now keeps stdout and stderr when the stream error is
+an exit-code error (k8s.io/utils/exec ExitError), and the tool returns
+the error followed by the captured streams, each under a `--- stdout ---`
+or `--- stderr ---` label. The result is still an error. Other stream
+errors, such as a broken connection, drop the partial buffers as before
+(TestOtherStreamErrorDropsBuffers is unchanged), and the
+max_backend_response_bytes cut is unchanged.
+
+Returning stderr alongside stdout on success (it is dropped when stdout
+is non-empty) is a deliberate choice from #1174 and is not changed here.
+
+The SPDY exec test helper gains StreamContext.WriteExitCode, which
+sends the kubelet's NonZeroExitCode status, so the MCP test can exercise
+the path end to end.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ internal/test/mock_server.go | 19 ++++++++++++++-
+ pkg/kubernetes/pods.go       |  8 +++++++
+ pkg/kubernetes/pods_test.go  | 16 +++++++++++++
+ pkg/mcp/pods_exec_test.go    | 46 ++++++++++++++++++++++++++++++++++++
+ pkg/toolsets/core/pods.go    | 24 ++++++++++++++++++-
+ 5 files changed, 111 insertions(+), 2 deletions(-)
+
+diff --git a/internal/test/mock_server.go b/internal/test/mock_server.go
+index f9c3b62..27b39f2 100644
+--- a/internal/test/mock_server.go
++++ b/internal/test/mock_server.go
+@@ -9,6 +9,7 @@ import (
+ 	"net/http"
+ 	"net/http/httptest"
+ 	"path/filepath"
++	"strconv"
+ 	"strings"
+ 	"sync"
+ 	"testing"
+@@ -121,6 +122,22 @@ type StreamContext struct {
+ 	StderrStream io.WriteCloser
+ 	errorStream  io.WriteCloser
+ 	writeStatus  func(status *apierrors.StatusError) error
++	statusSent   bool
++}
++
++// WriteExitCode sends the v4 terminal status of a command that exited with a
++// non-zero code, as the kubelet does. Close then sends no success status.
++func (c *StreamContext) WriteExitCode(code int) error {
++	if c.writeStatus == nil {
++		return errors.New("no error stream")
++	}
++	c.statusSent = true
++	return c.writeStatus(&apierrors.StatusError{ErrStatus: metav1.Status{
++		Status:  metav1.StatusFailure,
++		Reason:  "NonZeroExitCode",
++		Message: fmt.Sprintf("command terminated with non-zero exit code: exit code %d", code),
++		Details: &metav1.StatusDetails{Causes: []metav1.StatusCause{{Type: "ExitCode", Message: strconv.Itoa(code)}}},
++	}})
+ }
+ 
+ // Close gracefully tears down the exec streams so the client always observes a
+@@ -134,7 +151,7 @@ type StreamContext struct {
+ // the streams down — this graceful teardown is the only path.
+ func (c *StreamContext) Close() error {
+ 	// Send the v4 success terminal status on the error stream.
+-	if c.writeStatus != nil {
++	if c.writeStatus != nil && !c.statusSent {
+ 		_ = c.writeStatus(&apierrors.StatusError{ErrStatus: metav1.Status{Status: metav1.StatusSuccess}})
+ 	}
+ 	// Close every stream so each delivers a clean EOF (and flushes its reply)
+diff --git a/pkg/kubernetes/pods.go b/pkg/kubernetes/pods.go
+index a3ff446..8187f95 100644
+--- a/pkg/kubernetes/pods.go
++++ b/pkg/kubernetes/pods.go
+@@ -21,6 +21,7 @@ import (
+ 	"k8s.io/metrics/pkg/apis/metrics"
+ 	metricsv1beta1api "k8s.io/metrics/pkg/apis/metrics/v1beta1"
+ 	"k8s.io/streaming/pkg/httpstream"
++	utilexec "k8s.io/utils/exec"
+ 	"k8s.io/utils/ptr"
+ 
+ 	"github.com/containers/kubernetes-mcp-server/pkg/api"
+@@ -444,6 +445,13 @@ func (o *execOutput) finish(err error) (string, string, error) {
+ 		}
+ 		return o.stdout.String(), o.stderr.String(), nil
+ 	}
++	// A command that ran and exited with a non-zero code: keep what it wrote, which
++	// usually explains the failure. Other stream errors (a broken connection) still
++	// drop the partial buffers.
++	var exitErr utilexec.ExitError
++	if errors.As(err, &exitErr) {
++		return o.stdout.String(), o.stderr.String(), err
++	}
+ 	if err != nil {
+ 		return "", "", err
+ 	}
+diff --git a/pkg/kubernetes/pods_test.go b/pkg/kubernetes/pods_test.go
+index 42fc0df..bd26b15 100644
+--- a/pkg/kubernetes/pods_test.go
++++ b/pkg/kubernetes/pods_test.go
+@@ -8,6 +8,7 @@ import (
+ 	"github.com/stretchr/testify/suite"
+ 	v1 "k8s.io/api/core/v1"
+ 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
++	utilexec "k8s.io/utils/exec"
+ )
+ 
+ type ResolveContainerSuite struct {
+@@ -155,6 +156,21 @@ func (s *ExecOutputSuite) TestOtherStreamErrorDropsBuffers() {
+ 	s.Empty(stderr)
+ }
+ 
++func (s *ExecOutputSuite) TestNonZeroExitKeepsBuffers() {
++	_, cancel := context.WithCancel(context.Background())
++	defer cancel()
++	out := newExecOutput(0, cancel)
++	_, err := out.stdoutWriter().Write([]byte("partial"))
++	s.Require().NoError(err)
++	_, err = out.stderrWriter().Write([]byte("why"))
++	s.Require().NoError(err)
++	exitErr := utilexec.CodeExitError{Err: errors.New("command terminated with exit code 3"), Code: 3}
++	stdout, stderr, err := out.finish(exitErr)
++	s.ErrorIs(err, exitErr)
++	s.Equal("partial", stdout)
++	s.Equal("why", stderr)
++}
++
+ func (s *ExecOutputSuite) TestTruncationKeepsBytesWhenStreamErrors() {
+ 	_, cancel := context.WithCancel(context.Background())
+ 	defer cancel()
+diff --git a/pkg/mcp/pods_exec_test.go b/pkg/mcp/pods_exec_test.go
+index a295239..c86b54f 100644
+--- a/pkg/mcp/pods_exec_test.go
++++ b/pkg/mcp/pods_exec_test.go
+@@ -221,6 +221,52 @@ func (s *PodsExecSuite) TestPodsExecDenied() {
+ 	})
+ }
+ 
++func (s *PodsExecSuite) TestPodsExecNonZeroExit() {
++	s.mockServer.Handle(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
++		if req.URL.Path != "/api/v1/namespaces/default/pods/pod-to-exec/exec" {
++			return
++		}
++		var stdout, stderr bytes.Buffer
++		ctx, err := test.CreateHTTPStreams(w, req, &test.StreamOptions{Stdout: &stdout, Stderr: &stderr})
++		if err != nil {
++			w.WriteHeader(http.StatusInternalServerError)
++			_, _ = w.Write([]byte(err.Error()))
++			return
++		}
++		defer func() { _ = ctx.Close() }()
++		_, _ = io.WriteString(ctx.StdoutStream, "partial\n")
++		_, _ = io.WriteString(ctx.StderrStream, "why it failed\n")
++		_ = ctx.WriteExitCode(3)
++	}))
++	s.mockServer.Handle(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
++		if req.URL.Path != "/api/v1/namespaces/default/pods/pod-to-exec" {
++			return
++		}
++		test.WriteObject(w, &v1.Pod{
++			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "pod-to-exec"},
++			Spec:       v1.PodSpec{Containers: []v1.Container{{Name: "container-to-exec"}}},
++		})
++	}))
++	s.InitMcpClient()
++	result, err := s.CallTool("pods_exec", map[string]interface{}{
++		"name":      "pod-to-exec",
++		"namespace": "default",
++		"command":   []interface{}{"sh", "-c", "exit 3"},
++	})
++	s.Require().NoError(err)
++	text := result.Content[0].(*mcp.TextContent).Text
++	s.Run("returns an error with the exit code", func() {
++		s.True(result.IsError)
++		s.Contains(text, "command terminated with exit code 3")
++	})
++	s.Run("returns the captured stdout", func() {
++		s.Contains(text, "--- stdout ---\npartial\n")
++	})
++	s.Run("returns the captured stderr", func() {
++		s.Contains(text, "--- stderr ---\nwhy it failed\n")
++	})
++}
++
+ func TestPodsExec(t *testing.T) {
+ 	suite.Run(t, new(PodsExecSuite))
+ }
+diff --git a/pkg/toolsets/core/pods.go b/pkg/toolsets/core/pods.go
+index 1e83382..fdfde5a 100644
+--- a/pkg/toolsets/core/pods.go
++++ b/pkg/toolsets/core/pods.go
+@@ -4,6 +4,7 @@ import (
+ 	"bytes"
+ 	"errors"
+ 	"fmt"
++	"strings"
+ 
+ 	"github.com/google/jsonschema-go/jsonschema"
+ 	"k8s.io/apimachinery/pkg/api/resource"
+@@ -505,7 +506,12 @@ func podsExec(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 	}
+ 	stdout, stderr, err := kubernetes.NewCore(params).PodsExec(params, params.Config, ns, name, container, command)
+ 	if err != nil {
+-		return api.NewToolCallResult("", fmt.Errorf("failed to exec in pod %s in namespace %s: %w", name, ns, err)), nil
++		err = fmt.Errorf("failed to exec in pod %s in namespace %s: %w", name, ns, err)
++		if stdout == "" && stderr == "" {
++			return api.NewToolCallResult("", err), nil
++		}
++		// A command that ran and failed: return its output with the error.
++		return api.NewToolCallResult("", fmt.Errorf("%w\n%s", err, execStreams(stdout, stderr))), nil
+ 	}
+ 
+ 	// Prefer stdout, fallback to stderr, or indicate no output
+@@ -519,6 +525,22 @@ func podsExec(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 	return api.NewToolCallResult(ret, nil), nil
+ }
+ 
++// execStreams renders captured stdout and stderr, labelled, for an exec error.
++func execStreams(stdout, stderr string) string {
++	var b strings.Builder
++	for _, stream := range []struct{ name, text string }{{"stdout", stdout}, {"stderr", stderr}} {
++		if stream.text == "" {
++			continue
++		}
++		b.WriteString("--- " + stream.name + " ---\n")
++		b.WriteString(stream.text)
++		if !strings.HasSuffix(stream.text, "\n") {
++			b.WriteString("\n")
++		}
++	}
++	return b.String()
++}
++
+ func podsLog(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 	p := api.WrapParams(params)
+ 	ns := p.OptionalString("namespace", "")

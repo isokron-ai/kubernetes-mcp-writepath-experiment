@@ -1,0 +1,243 @@
+From ae8b9aa5cd76ef96920756788e44814830d0a1f9 Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 11:31:49 -0700
+Subject: [PATCH 06/14] fix(tekton,kubevirt): refuse wrongly typed params and
+ networks arguments
+
+The server registers tools through the go-sdk raw AddTool path, which
+does not validate arguments against the input schema, so each handler
+checks its own. Three handlers dropped a wrongly typed value instead:
+
+- tekton_task_start and tekton_pipeline_start read `params` with a type
+  assertion to an object; a string (for example "greeting=hello") was
+  ignored and the run started without parameters, with a success answer.
+- vm_create read `networks` with a type assertion to an array; a string
+  was ignored and the VM was created without its secondary networks.
+
+These arguments are now refused with an error that names the expected
+type, before anything is read or written. A missing or null argument
+behaves as before. The broader issue, schema validation of tool
+arguments, is the same root cause as #1584 and is not changed here.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+(cherry picked from commit 1d6f52c1a8f41ce7e9a6eb3640d7233c2bb25cd5)
+---
+ pkg/mcp/kubevirt_test.go                | 10 +++++++
+ pkg/mcp/tekton_test.go                  | 38 +++++++++++++++++++++++++
+ pkg/toolsets/kubevirt/vm/create/tool.go | 19 ++++++++-----
+ pkg/toolsets/tekton/params.go           | 15 ++++++++++
+ pkg/toolsets/tekton/pipeline.go         | 18 ++++++------
+ pkg/toolsets/tekton/task.go             | 18 ++++++------
+ 6 files changed, 93 insertions(+), 25 deletions(-)
+
+diff --git a/pkg/mcp/kubevirt_test.go b/pkg/mcp/kubevirt_test.go
+index 24783b4..0225753 100644
+--- a/pkg/mcp/kubevirt_test.go
++++ b/pkg/mcp/kubevirt_test.go
+@@ -141,6 +141,16 @@ func (s *KubevirtSuite) TestCreate() {
+ 			s.Equal("quay.io/containerdisks/fedora:latest", test.FieldString(vm, "spec.template.spec.volumes[0].containerDisk.image"))
+ 		})
+ 	})
++	s.Run("vm_create with networks given as a string", func() {
++		toolResult, err := s.CallTool("vm_create", map[string]interface{}{
++			"name":      "test-vm-string-networks",
++			"namespace": "default",
++			"networks":  "vlan-network",
++		})
++		s.Require().NoError(err)
++		s.True(toolResult.IsError, "a wrongly typed networks argument must not create a VM without networks")
++		s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "networks must be an array")
++	})
+ 	s.Run("vm_create(workload=ubuntu, instancetype=u1.medium) with instancetype", func() {
+ 		toolResult, err := s.CallTool("vm_create", map[string]interface{}{
+ 			"name":         "test-vm-2",
+diff --git a/pkg/mcp/tekton_test.go b/pkg/mcp/tekton_test.go
+index 82f342d..97f8394 100644
+--- a/pkg/mcp/tekton_test.go
++++ b/pkg/mcp/tekton_test.go
+@@ -902,6 +902,44 @@ func (s *TektonMcpSuite) createTektonConfig() {
+ 	s.Require().NoError(err)
+ }
+ 
++func (s *TektonMcpSuite) TestStartRefusesWronglyTypedParams() {
++	for _, tc := range []struct{ tool, kind, resource string }{
++		{"tekton_task_start", "Task", "tasks"},
++		{"tekton_pipeline_start", "Pipeline", "pipelines"},
++	} {
++		s.Run(tc.tool+" with params given as a string", func() {
++			_, err := s.dynamic.Resource(schema.GroupVersionResource{Group: "tekton.dev", Version: "v1", Resource: tc.resource}).
++				Namespace(s.namespace).Create(s.T().Context(), &unstructured.Unstructured{Object: map[string]interface{}{
++				"apiVersion": "tekton.dev/v1",
++				"kind":       tc.kind,
++				"metadata":   map[string]interface{}{"name": "typed-params"},
++				"spec":       map[string]interface{}{},
++			}}, metav1.CreateOptions{})
++			s.Require().NoError(err)
++			result, err := s.CallTool(tc.tool, map[string]interface{}{
++				"name":      "typed-params",
++				"namespace": s.namespace,
++				"params":    "greeting=hello",
++			})
++			s.Require().NoError(err)
++			s.Run("returns an error", func() {
++				s.True(result.IsError, "a wrongly typed params argument must not start a run without parameters")
++				s.Contains(result.Content[0].(*mcp.TextContent).Text, "params must be an object")
++			})
++			s.Run("starts no run", func() {
++				runs := "taskruns"
++				if tc.kind == "Pipeline" {
++					runs = "pipelineruns"
++				}
++				list, listErr := s.dynamic.Resource(schema.GroupVersionResource{Group: "tekton.dev", Version: "v1", Resource: runs}).
++					Namespace(s.namespace).List(s.T().Context(), metav1.ListOptions{})
++				s.Require().NoError(listErr)
++				s.Empty(list.Items)
++			})
++		})
++	}
++}
++
+ func TestTektonMcp(t *testing.T) {
+ 	suite.Run(t, new(TektonMcpSuite))
+ }
+diff --git a/pkg/toolsets/kubevirt/vm/create/tool.go b/pkg/toolsets/kubevirt/vm/create/tool.go
+index d011ece..9525dfd 100644
+--- a/pkg/toolsets/kubevirt/vm/create/tool.go
++++ b/pkg/toolsets/kubevirt/vm/create/tool.go
+@@ -266,7 +266,11 @@ func parseCreateParameters(params api.ToolHandlerParams) (*createParameters, err
+ 		return nil, err
+ 	}
+ 
+-	networks, err := parseNetworks(optionalArray(params, "networks"))
++	rawNetworks, err := optionalArray(params, "networks")
++	if err != nil {
++		return nil, fmt.Errorf("invalid networks parameter: %w", err)
++	}
++	networks, err := parseNetworks(rawNetworks)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("invalid networks parameter: %w", err)
+ 	}
+@@ -286,18 +290,19 @@ func parseCreateParameters(params api.ToolHandlerParams) (*createParameters, err
+ }
+ 
+ // optionalArray extracts an optional array parameter from tool arguments.
+-// Returns the array value if present and valid, or nil if missing or not an array.
+-func optionalArray(params api.ToolHandlerParams, key string) []any {
++// Returns nil if the argument is missing or null, and an error if it is present
++// with any other type than an array (a wrongly typed value is refused, not dropped).
++func optionalArray(params api.ToolHandlerParams, key string) ([]any, error) {
+ 	args := params.GetArguments()
+ 	val, ok := args[key]
+-	if !ok {
+-		return nil
++	if !ok || val == nil {
++		return nil, nil
+ 	}
+ 	arr, ok := val.([]any)
+ 	if !ok {
+-		return nil
++		return nil, fmt.Errorf("%s must be an array, got %T", key, val)
+ 	}
+-	return arr
++	return arr, nil
+ }
+ 
+ // parseNetworks parses the networks input which is an array of either:
+diff --git a/pkg/toolsets/tekton/params.go b/pkg/toolsets/tekton/params.go
+index b41c98c..8da9a19 100644
+--- a/pkg/toolsets/tekton/params.go
++++ b/pkg/toolsets/tekton/params.go
+@@ -58,6 +58,21 @@ func hasPipelineRun(inspector api.ClusterInspector) api.TargetCompatibilityFilte
+ 	}
+ }
+ 
++// paramsArgument returns the "params" tool argument as a map. A missing or null
++// argument gives nil; any other type is an error, so a wrongly typed value is
++// refused instead of being dropped and starting the run without parameters.
++func paramsArgument(args map[string]any) (map[string]interface{}, error) {
++	raw, ok := args["params"]
++	if !ok || raw == nil {
++		return nil, nil
++	}
++	m, ok := raw.(map[string]interface{})
++	if !ok {
++		return nil, fmt.Errorf("params must be an object mapping each parameter name to its value, got %T", raw)
++	}
++	return m, nil
++}
++
+ // parseParams converts a map[string]interface{} from a tool call argument into Tekton Params.
+ // Each map entry becomes a Param whose value type is inferred from the Go value:
+ //   - string  → ParamTypeString
+diff --git a/pkg/toolsets/tekton/pipeline.go b/pkg/toolsets/tekton/pipeline.go
+index b217b25..cd21184 100644
+--- a/pkg/toolsets/tekton/pipeline.go
++++ b/pkg/toolsets/tekton/pipeline.go
+@@ -72,6 +72,15 @@ func startPipeline(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to start pipeline: %w", err)), nil
+ 	}
+ 
++	rawParams, err := paramsArgument(params.GetArguments())
++	if err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to start pipeline: %w", err)), nil
++	}
++	tektonParams, err := parseParams(rawParams)
++	if err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to parse params: %w", err)), nil
++	}
++
+ 	dynamicClient := params.DynamicClient()
+ 
+ 	// Verify that the Pipeline exists
+@@ -79,15 +88,6 @@ func startPipeline(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to get Pipeline %s/%s: %w", namespace, name, err)), nil
+ 	}
+ 
+-	var tektonParams []tektonv1.Param
+-	if rawParams, ok := params.GetArguments()["params"].(map[string]interface{}); ok {
+-		var err error
+-		tektonParams, err = parseParams(rawParams)
+-		if err != nil {
+-			return api.NewToolCallResult("", fmt.Errorf("failed to parse params: %w", err)), nil
+-		}
+-	}
+-
+ 	pr := &tektonv1.PipelineRun{
+ 		TypeMeta: metav1.TypeMeta{
+ 			APIVersion: "tekton.dev/v1",
+diff --git a/pkg/toolsets/tekton/task.go b/pkg/toolsets/tekton/task.go
+index b565a83..5d99753 100644
+--- a/pkg/toolsets/tekton/task.go
++++ b/pkg/toolsets/tekton/task.go
+@@ -72,6 +72,15 @@ func startTask(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to start task: %w", err)), nil
+ 	}
+ 
++	rawParams, err := paramsArgument(params.GetArguments())
++	if err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to start task: %w", err)), nil
++	}
++	tektonParams, err := parseParams(rawParams)
++	if err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to parse params: %w", err)), nil
++	}
++
+ 	dynamicClient := params.DynamicClient()
+ 
+ 	// Verify that the Task exists
+@@ -79,15 +88,6 @@ func startTask(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to get Task %s/%s: %w", namespace, name, err)), nil
+ 	}
+ 
+-	var tektonParams []tektonv1.Param
+-	if rawParams, ok := params.GetArguments()["params"].(map[string]interface{}); ok {
+-		var err error
+-		tektonParams, err = parseParams(rawParams)
+-		if err != nil {
+-			return api.NewToolCallResult("", fmt.Errorf("failed to parse params: %w", err)), nil
+-		}
+-	}
+-
+ 	tr := &tektonv1.TaskRun{
+ 		TypeMeta: metav1.TypeMeta{
+ 			APIVersion: "tekton.dev/v1",

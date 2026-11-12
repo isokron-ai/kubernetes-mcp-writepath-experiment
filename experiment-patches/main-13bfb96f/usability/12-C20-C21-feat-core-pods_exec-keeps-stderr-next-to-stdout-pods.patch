@@ -1,0 +1,153 @@
+From 2d8d92e641f6ce92bcefd89a6be52325539e5750 Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 12:37:10 -0700
+Subject: [PATCH 12/19] feat(core): pods_exec keeps stderr next to stdout;
+ pods_log reports kubelet retrieval failures as errors (C20, C21)
+
+pods_exec returned stdout and dropped stderr whenever stdout was
+non-empty (a deliberate choice in #1174), so warnings and diagnostics
+of a successful command were lost; on the native session the agent
+missed an HTTP status written to stderr. The fixed build already
+returns both streams with the error on a non-zero exit (K8S-19). Now a
+successful command returns stdout as before, followed by its stderr
+under a `--- stderr ---` label when there is any. Output with only one
+stream is unchanged.
+
+pods_log with previous: true on a container whose previous log the
+kubelet can no longer read returned the kubelet's one-line answer
+("unable to retrieve container logs for containerd://...") as if it
+were the log, with success. The kubelet sends it with a 200 status.
+That single line is now recognised and returned as an error, with a
+hint that the previous container's log is no longer on the node.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ pkg/mcp/pods_exec_test.go          | 31 ++++++++++++++++++++++++++++++
+ pkg/toolsets/core/pods.go          | 26 +++++++++++++++++++++++--
+ pkg/toolsets/core/pods_log_test.go | 22 +++++++++++++++++++++
+ 3 files changed, 77 insertions(+), 2 deletions(-)
+ create mode 100644 pkg/toolsets/core/pods_log_test.go
+
+diff --git a/pkg/mcp/pods_exec_test.go b/pkg/mcp/pods_exec_test.go
+index c86b54f..b1d46fc 100644
+--- a/pkg/mcp/pods_exec_test.go
++++ b/pkg/mcp/pods_exec_test.go
+@@ -267,6 +267,37 @@ func (s *PodsExecSuite) TestPodsExecNonZeroExit() {
+ 	})
+ }
+ 
++func (s *PodsExecSuite) TestPodsExecReturnsStderrWithStdout() {
++	s.mockServer.Handle(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
++		if req.URL.Path != "/api/v1/namespaces/default/pods/pod-to-exec/exec" {
++			return
++		}
++		var stdout, stderr bytes.Buffer
++		ctx, err := test.CreateHTTPStreams(w, req, &test.StreamOptions{Stdout: &stdout, Stderr: &stderr})
++		if err != nil {
++			w.WriteHeader(http.StatusInternalServerError)
++			return
++		}
++		defer func() { _ = ctx.Close() }()
++		_, _ = io.WriteString(ctx.StdoutStream, "ok\n")
++		_, _ = io.WriteString(ctx.StderrStream, "warning: deprecated flag\n")
++	}))
++	s.mockServer.Handle(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
++		if req.URL.Path != "/api/v1/namespaces/default/pods/pod-to-exec" {
++			return
++		}
++		test.WriteObject(w, &v1.Pod{
++			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "pod-to-exec"},
++			Spec:       v1.PodSpec{Containers: []v1.Container{{Name: "c"}}},
++		})
++	}))
++	s.InitMcpClient()
++	result, err := s.CallTool("pods_exec", map[string]interface{}{"name": "pod-to-exec", "namespace": "default", "command": []interface{}{"tool"}})
++	s.Require().NoError(err)
++	s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++	s.Equal("ok\n--- stderr ---\nwarning: deprecated flag\n", result.Content[0].(*mcp.TextContent).Text)
++}
++
+ func TestPodsExec(t *testing.T) {
+ 	suite.Run(t, new(PodsExecSuite))
+ }
+diff --git a/pkg/toolsets/core/pods.go b/pkg/toolsets/core/pods.go
+index 3cddebe..04f9c56 100644
+--- a/pkg/toolsets/core/pods.go
++++ b/pkg/toolsets/core/pods.go
+@@ -535,10 +535,17 @@ func podsExec(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 		return api.NewToolCallResult("", fmt.Errorf("%w\n%s", err, execStreams(stdout, stderr))), nil
+ 	}
+ 
+-	// Prefer stdout, fallback to stderr, or indicate no output
++	// stdout as before; stderr is no longer dropped when stdout is non-empty: it follows,
++	// labelled, so warnings and diagnostics reach the caller (exit code 0)
+ 	ret := stdout
+-	if ret == "" && stderr != "" {
++	switch {
++	case stdout == "" && stderr != "":
+ 		ret = stderr
++	case stdout != "" && stderr != "":
++		if !strings.HasSuffix(ret, "\n") {
++			ret += "\n"
++		}
++		ret += execStreams("", stderr)
+ 	}
+ 	if ret == "" {
+ 		ret = fmt.Sprintf("The executed command in pod %s in namespace %s has not produced any output", name, ns)
+@@ -546,6 +553,13 @@ func podsExec(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 	return api.NewToolCallResult(ret, nil), nil
+ }
+ 
++// kubeletLogFailure recognises the kubelet's "unable to retrieve container logs for
++// <runtime>://<id>" answer, which arrives as a 200 response body instead of an error.
++func kubeletLogFailure(log string) bool {
++	line := strings.TrimSpace(log)
++	return strings.HasPrefix(line, "unable to retrieve container logs for ") && !strings.Contains(line, "\n")
++}
++
+ // execStreams renders captured stdout and stderr, labelled, for an exec error.
+ func execStreams(stdout, stderr string) string {
+ 	var b strings.Builder
+@@ -575,6 +589,14 @@ func podsLog(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 	ret, err := kubernetes.NewCore(params).PodsLog(params.Context, ns, name, container, previousBool, tailInt)
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to get pod %s log in namespace %s: %w", name, ns, err)), nil
++	} else if kubeletLogFailure(ret) {
++		// The kubelet answers 200 with this single line when it cannot read the log file
++		// (for example the previous container's log was rotated or removed).
++		hint := ""
++		if previousBool {
++			hint = "; the previous container's log is no longer available on the node"
++		}
++		return api.NewToolCallResult("", fmt.Errorf("failed to get pod %s log in namespace %s: %s%s", name, ns, strings.TrimSpace(ret), hint)), nil
+ 	} else if ret == "" {
+ 		ret = fmt.Sprintf("The pod %s in namespace %s has not logged any message yet", name, ns)
+ 	}
+diff --git a/pkg/toolsets/core/pods_log_test.go b/pkg/toolsets/core/pods_log_test.go
+new file mode 100644
+index 0000000..01a23d8
+--- /dev/null
++++ b/pkg/toolsets/core/pods_log_test.go
+@@ -0,0 +1,22 @@
++package core
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/suite"
++)
++
++type PodsLogSuite struct {
++	suite.Suite
++}
++
++func (s *PodsLogSuite) TestKubeletLogFailure() {
++	s.True(kubeletLogFailure("unable to retrieve container logs for containerd://92a45e39097b"))
++	s.True(kubeletLogFailure("unable to retrieve container logs for docker://abc\n"))
++	s.False(kubeletLogFailure("worker starting\nunable to retrieve container logs for x"))
++	s.False(kubeletLogFailure("connecting to db"))
++}
++
++func TestPodsLog(t *testing.T) {
++	suite.Run(t, new(PodsLogSuite))
++}

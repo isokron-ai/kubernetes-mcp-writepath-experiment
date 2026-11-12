@@ -1,0 +1,642 @@
+From ccfe43cb03b08cec002bf656a353842c89a4ae58 Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 12:00:11 -0700
+Subject: [PATCH 01/19] feat(core): trimmed write receipts with output: full;
+ scale results state the change (C3, C25)
+
+Write results echoed every written object in full: spec, data and the
+API's defaults. On the usability pass that was 6,233 tokens of echoes
+(first native series) and 2,333 more in the second, almost none of
+which the agent used. resources_scale had the opposite problem: scaling
+to zero answered `spec: {}` (the API omits a zero) with the status from
+before the change, so the result could not show what happened, and the
+agent spent two verification reads.
+
+Receipts (C3):
+- resources_create_or_update and pods_run return, for each object,
+  apiVersion, kind and metadata.name, namespace, uid, resourceVersion
+  and generation (and deletionTimestamp if set). That is what a caller
+  needs to refer to the object again or to send a version
+  precondition. Receipts carry no spec, data, status or secrets.
+- A new optional `output` argument, 'receipt' (default) or 'full',
+  returns the whole objects as before. The first result line is
+  unchanged; a second comment line says how to get the full objects.
+
+Scale results (C25):
+- A changed scale is stated as "<Kind> <ns>/<name> scaled:
+  spec.replicas <from> -> <to>", and says that the status shown was
+  read with the change, before the controller acted.
+- spec.replicas is always present, including 0.
+- The body is a trimmed Scale (identity, spec.replicas,
+  status.replicas); `output: full` returns the whole Scale object.
+
+The default is a deliberate change of output. Tests that inspected full
+pods_run objects now pass `output: full`; the resources_scale tests
+decode the same YAML as before.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ pkg/kubernetes/resources.go                   |  12 ++
+ pkg/mcp/pods_run_test.go                      |  26 ++++-
+ pkg/mcp/resources_test.go                     |  61 ++++++++++
+ pkg/mcp/testdata/toolsets-core-tools.json     |  24 ++++
+ .../toolsets-full-tools-multicluster.json     |  24 ++++
+ .../toolsets-full-tools-openshift.json        |  24 ++++
+ pkg/mcp/testdata/toolsets-full-tools.json     |  24 ++++
+ pkg/toolsets/core/pods.go                     |  13 ++-
+ pkg/toolsets/core/receipt.go                  | 109 ++++++++++++++++++
+ pkg/toolsets/core/resources.go                |  24 +++-
+ 10 files changed, 332 insertions(+), 9 deletions(-)
+ create mode 100644 pkg/toolsets/core/receipt.go
+
+diff --git a/pkg/kubernetes/resources.go b/pkg/kubernetes/resources.go
+index ab6f37c..b95043f 100644
+--- a/pkg/kubernetes/resources.go
++++ b/pkg/kubernetes/resources.go
+@@ -7,6 +7,7 @@ import (
+ 	"errors"
+ 	"fmt"
+ 	"io"
++	"strconv"
+ 	"strings"
+ 
+ 	"k8s.io/apimachinery/pkg/api/meta"
+@@ -165,6 +166,11 @@ func (c *Core) ResourcesScale(
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	// spec.replicas is omitted from the API's answer when it is 0; record it explicitly,
++	// with the value before any change, so callers can state the change.
++	previous, _, _ := unstructured.NestedInt64(scale.Object, "spec", "replicas")
++	_ = unstructured.SetNestedField(scale.Object, previous, "spec", "replicas")
++	scale.SetAnnotations(nil)
+ 
+ 	if shouldScale {
+ 		if err := unstructured.SetNestedField(scale.Object, desiredScale, "spec", "replicas"); err != nil {
+@@ -175,11 +181,17 @@ func (c *Core) ResourcesScale(
+ 		if err != nil {
+ 			return scale, fmt.Errorf("failed to update scale: %w", err)
+ 		}
++		_ = unstructured.SetNestedField(scale.Object, desiredScale, "spec", "replicas")
++		scale.SetAnnotations(map[string]string{ScalePreviousReplicasAnnotation: strconv.FormatInt(previous, 10)})
+ 	}
+ 
+ 	return scale, nil
+ }
+ 
++// ScalePreviousReplicasAnnotation is set (in the returned object only, never on the
++// cluster) by ResourcesScale on a changed Scale to the replicas before the change.
++const ScalePreviousReplicasAnnotation = "kubernetes-mcp-server/previous-replicas"
++
+ // resourcesListAsTable retrieves a list of resources in a table format.
+ // It's almost identical to the dynamic.DynamicClient implementation, but it uses a specific Accept header to request the table format.
+ // dynamic.DynamicClient does not provide a way to set the HTTP header (TODO: create an issue to request this feature)
+diff --git a/pkg/mcp/pods_run_test.go b/pkg/mcp/pods_run_test.go
+index e076f06..1b10c59 100644
+--- a/pkg/mcp/pods_run_test.go
++++ b/pkg/mcp/pods_run_test.go
+@@ -38,7 +38,7 @@ func (s *PodsRunSuite) TestPodsRun() {
+ 		}
+ 	})
+ 	s.Run("pods_run(image=nginx, namespace=nil), uses configured namespace", func() {
+-		podsRunNilNamespace, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx"})
++		podsRunNilNamespace, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "output": "full"})
+ 		s.Run("no error", func() {
+ 			s.Nilf(err, "call tool failed %v", err)
+ 			s.Falsef(podsRunNilNamespace.IsError, "call tool failed")
+@@ -71,7 +71,7 @@ func (s *PodsRunSuite) TestPodsRun() {
+ 		})
+ 	})
+ 	s.Run("pods_run(image=nginx, namespace=nil, port=80)", func() {
+-		podsRunNamespaceAndPort, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "port": 80})
++		podsRunNamespaceAndPort, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "port": 80, "output": "full"})
+ 		s.Run("no error", func() {
+ 			s.Nilf(err, "call tool failed %v", err)
+ 			s.Falsef(podsRunNamespaceAndPort.IsError, "call tool failed")
+@@ -155,6 +155,26 @@ func (s *PodsRunSuite) TestPodsRunIsAnnotatedDestructive() {
+ 	s.Fail("pods_run not listed")
+ }
+ 
++func (s *PodsRunSuite) TestPodsRunReturnsReceiptByDefault() {
++	s.InitMcpClient()
++	toolResult, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "name": "receipt-pod", "port": 80})
++	s.Require().NoError(err)
++	s.Require().Falsef(toolResult.IsError, "call tool failed: %v", toolResult.Content)
++	text := toolResult.Content[0].(*mcp.TextContent).Text
++	var decoded []unstructured.Unstructured
++	s.Require().NoError(yaml.Unmarshal([]byte(text), &decoded))
++	s.Run("names each object with its uid and resourceVersion", func() {
++		s.Require().Len(decoded, 2)
++		s.Equal("receipt-pod", decoded[0].GetName())
++		s.NotEmpty(decoded[0].GetUID())
++		s.NotEmpty(decoded[0].GetResourceVersion())
++	})
++	s.Run("carries no spec or status", func() {
++		s.NotContains(text, "spec:")
++		s.NotContains(text, "status:")
++	})
++}
++
+ func (s *PodsRunSuite) TestPodsRunDenied() {
+ 	configtest.OverlayTOML(s.T(), &s.Cfg, `
+ 		denied_resources = [ { version = "v1", kind = "Pod" } ]
+@@ -184,7 +204,7 @@ func (s *PodsRunSuite) TestPodsRunInOpenShift() {
+ 	s.InitMcpClient()
+ 
+ 	s.Run("pods_run(image=nginx, namespace=nil, port=80) returns route with port", func() {
+-		podsRunInOpenShift, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "port": 80})
++		podsRunInOpenShift, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "port": 80, "output": "full"})
+ 		s.Run("no error", func() {
+ 			s.Nilf(err, "call tool failed %v", err)
+ 			s.Falsef(podsRunInOpenShift.IsError, "call tool failed")
+diff --git a/pkg/mcp/resources_test.go b/pkg/mcp/resources_test.go
+index 3e99e29..04aeb64 100644
+--- a/pkg/mcp/resources_test.go
++++ b/pkg/mcp/resources_test.go
+@@ -1425,6 +1425,67 @@ func findAPIResourceByKind(resources []apiResourceEntry, kind string) *apiResour
+ 	return nil
+ }
+ 
++func (s *ResourcesSuite) TestResourcesWriteReceipts() {
++	s.InitMcpClient()
++	cm := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: a-cm-receipt\n  namespace: default\ndata:\n  big: " + strings.Repeat("x", 200) + "\n"
++	s.Run("resources_create_or_update returns a receipt by default", func() {
++		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{"resource": cm})
++		s.Require().NoError(err)
++		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++		text := result.Content[0].(*mcp.TextContent).Text
++		var decoded []unstructured.Unstructured
++		s.Require().NoError(yaml.Unmarshal([]byte(text), &decoded))
++		s.Require().Len(decoded, 1)
++		s.Equal("a-cm-receipt", decoded[0].GetName())
++		s.NotEmpty(decoded[0].GetResourceVersion())
++		s.NotContains(text, "xxxx", "a receipt carries no data")
++	})
++	s.Run("resources_create_or_update with output: full returns the object", func() {
++		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{"resource": cm, "output": "full"})
++		s.Require().NoError(err)
++		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++		s.Contains(result.Content[0].(*mcp.TextContent).Text, strings.Repeat("x", 200))
++	})
++	s.Run("an unknown output value is refused", func() {
++		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{"resource": cm, "output": "everything"})
++		s.Require().NoError(err)
++		s.True(result.IsError)
++	})
++}
++
++func (s *ResourcesSuite) TestResourcesScaleStatesTheChange() {
++	s.InitMcpClient()
++	kc := kubernetes.NewForConfigOrDie(test.EnvTestRestConfig())
++	_, err := kc.AppsV1().Deployments("default").Create(s.T().Context(), &appsv1.Deployment{
++		ObjectMeta: metav1.ObjectMeta{Name: "deployment-to-scale-to-zero"},
++		Spec: appsv1.DeploymentSpec{
++			Replicas: ptr.To(int32(1)),
++			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "zero"}},
++			Template: corev1.PodTemplateSpec{
++				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "zero"}},
++				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "nginx"}}},
++			},
++		},
++	}, metav1.CreateOptions{})
++	s.Require().NoError(err)
++	result, err := s.CallTool("resources_scale", map[string]interface{}{
++		"apiVersion": "apps/v1", "kind": "Deployment", "namespace": "default", "name": "deployment-to-scale-to-zero", "scale": 0,
++	})
++	s.Require().NoError(err)
++	s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++	text := result.Content[0].(*mcp.TextContent).Text
++	s.Run("states the change from and to", func() {
++		s.Contains(text, "Deployment default/deployment-to-scale-to-zero scaled: spec.replicas 1 -> 0")
++	})
++	s.Run("shows spec.replicas 0 explicitly", func() {
++		var decoded unstructured.Unstructured
++		s.Require().NoError(yaml.Unmarshal([]byte(text), &decoded))
++		replicas, found, _ := unstructured.NestedInt64(decoded.Object, "spec", "replicas")
++		s.True(found, "spec.replicas must be present even when it is 0")
++		s.Equal(int64(0), replicas)
++	})
++}
++
+ func TestResources(t *testing.T) {
+ 	suite.Run(t, new(ResourcesSuite))
+ }
+diff --git a/pkg/mcp/testdata/toolsets-core-tools.json b/pkg/mcp/testdata/toolsets-core-tools.json
+index ca0ccb1..e5dc0f0 100644
+--- a/pkg/mcp/testdata/toolsets-core-tools.json
++++ b/pkg/mcp/testdata/toolsets-core-tools.json
+@@ -841,6 +841,14 @@
+           "description": "Namespace to run the Pod in",
+           "type": "string"
+         },
++        "output": {
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "enum": [
++            "receipt",
++            "full"
++          ],
++          "type": "string"
++        },
+         "port": {
+           "description": "TCP/IP port to expose from the Pod container, 1-65535 (Optional, no port exposed if not provided)",
+           "type": "number"
+@@ -999,6 +1007,14 @@
+     "description": "Create or update a Kubernetes resource via Server-Side Apply. The manifest is the complete desired state: any field this tool previously set and the new manifest omits is removed. To edit an existing resource, fetch it with resources_get, modify it, then re-apply the full resource.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
+     "inputSchema": {
+       "properties": {
++        "output": {
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "enum": [
++            "receipt",
++            "full"
++          ],
++          "type": "string"
++        },
+         "resource": {
+           "description": "Complete YAML or JSON representation of the Kubernetes resource (full desired state, not a partial patch). Include apiVersion, kind, metadata, and the full spec. For namespaced resources, include metadata.namespace to specify the target namespace; if omitted, the configured default namespace is used",
+           "type": "string"
+@@ -1274,6 +1290,14 @@
+           "description": "Optional Namespace to get/update the namespaced resource scale from (ignored in case of cluster scoped resources). If not provided, will get/update resource scale from configured namespace",
+           "type": "string"
+         },
++        "output": {
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "enum": [
++            "receipt",
++            "full"
++          ],
++          "type": "string"
++        },
+         "scale": {
+           "description": "Optional scale to update the resources scale to. If not provided, will return the current scale of the resource, and not update it",
+           "type": "integer"
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+index 106742d..9acb449 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+@@ -942,6 +942,14 @@
+           "description": "Namespace to run the Pod in",
+           "type": "string"
+         },
++        "output": {
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "enum": [
++            "receipt",
++            "full"
++          ],
++          "type": "string"
++        },
+         "port": {
+           "description": "TCP/IP port to expose from the Pod container, 1-65535 (Optional, no port exposed if not provided)",
+           "type": "number"
+@@ -1112,6 +1120,14 @@
+           "description": "Optional parameter selecting which context to run the tool in. Defaults to fake-context if not set",
+           "type": "string"
+         },
++        "output": {
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "enum": [
++            "receipt",
++            "full"
++          ],
++          "type": "string"
++        },
+         "resource": {
+           "description": "Complete YAML or JSON representation of the Kubernetes resource (full desired state, not a partial patch). Include apiVersion, kind, metadata, and the full spec. For namespaced resources, include metadata.namespace to specify the target namespace; if omitted, the configured default namespace is used",
+           "type": "string"
+@@ -1403,6 +1419,14 @@
+           "description": "Optional Namespace to get/update the namespaced resource scale from (ignored in case of cluster scoped resources). If not provided, will get/update resource scale from configured namespace",
+           "type": "string"
+         },
++        "output": {
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "enum": [
++            "receipt",
++            "full"
++          ],
++          "type": "string"
++        },
+         "scale": {
+           "description": "Optional scale to update the resources scale to. If not provided, will return the current scale of the resource, and not update it",
+           "type": "integer"
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-openshift.json b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+index 5d91cd4..b1ba562 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-openshift.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+@@ -868,6 +868,14 @@
+           "description": "Namespace to run the Pod in",
+           "type": "string"
+         },
++        "output": {
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "enum": [
++            "receipt",
++            "full"
++          ],
++          "type": "string"
++        },
+         "port": {
+           "description": "TCP/IP port to expose from the Pod container, 1-65535 (Optional, no port exposed if not provided)",
+           "type": "number"
+@@ -1026,6 +1034,14 @@
+     "description": "Create or update a Kubernetes resource via Server-Side Apply. The manifest is the complete desired state: any field this tool previously set and the new manifest omits is removed. To edit an existing resource, fetch it with resources_get, modify it, then re-apply the full resource.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
+     "inputSchema": {
+       "properties": {
++        "output": {
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "enum": [
++            "receipt",
++            "full"
++          ],
++          "type": "string"
++        },
+         "resource": {
+           "description": "Complete YAML or JSON representation of the Kubernetes resource (full desired state, not a partial patch). Include apiVersion, kind, metadata, and the full spec. For namespaced resources, include metadata.namespace to specify the target namespace; if omitted, the configured default namespace is used",
+           "type": "string"
+@@ -1301,6 +1317,14 @@
+           "description": "Optional Namespace to get/update the namespaced resource scale from (ignored in case of cluster scoped resources). If not provided, will get/update resource scale from configured namespace",
+           "type": "string"
+         },
++        "output": {
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "enum": [
++            "receipt",
++            "full"
++          ],
++          "type": "string"
++        },
+         "scale": {
+           "description": "Optional scale to update the resources scale to. If not provided, will return the current scale of the resource, and not update it",
+           "type": "integer"
+diff --git a/pkg/mcp/testdata/toolsets-full-tools.json b/pkg/mcp/testdata/toolsets-full-tools.json
+index 5d91cd4..b1ba562 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools.json
++++ b/pkg/mcp/testdata/toolsets-full-tools.json
+@@ -868,6 +868,14 @@
+           "description": "Namespace to run the Pod in",
+           "type": "string"
+         },
++        "output": {
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "enum": [
++            "receipt",
++            "full"
++          ],
++          "type": "string"
++        },
+         "port": {
+           "description": "TCP/IP port to expose from the Pod container, 1-65535 (Optional, no port exposed if not provided)",
+           "type": "number"
+@@ -1026,6 +1034,14 @@
+     "description": "Create or update a Kubernetes resource via Server-Side Apply. The manifest is the complete desired state: any field this tool previously set and the new manifest omits is removed. To edit an existing resource, fetch it with resources_get, modify it, then re-apply the full resource.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
+     "inputSchema": {
+       "properties": {
++        "output": {
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "enum": [
++            "receipt",
++            "full"
++          ],
++          "type": "string"
++        },
+         "resource": {
+           "description": "Complete YAML or JSON representation of the Kubernetes resource (full desired state, not a partial patch). Include apiVersion, kind, metadata, and the full spec. For namespaced resources, include metadata.namespace to specify the target namespace; if omitted, the configured default namespace is used",
+           "type": "string"
+@@ -1301,6 +1317,14 @@
+           "description": "Optional Namespace to get/update the namespaced resource scale from (ignored in case of cluster scoped resources). If not provided, will get/update resource scale from configured namespace",
+           "type": "string"
+         },
++        "output": {
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "enum": [
++            "receipt",
++            "full"
++          ],
++          "type": "string"
++        },
+         "scale": {
+           "description": "Optional scale to update the resources scale to. If not provided, will return the current scale of the resource, and not update it",
+           "type": "integer"
+diff --git a/pkg/toolsets/core/pods.go b/pkg/toolsets/core/pods.go
+index 413deee..511d937 100644
+--- a/pkg/toolsets/core/pods.go
++++ b/pkg/toolsets/core/pods.go
+@@ -332,6 +332,7 @@ func initPods(inspector api.ClusterInspector) []api.ServerTool {
+ 						Type:        "number",
+ 						Description: "TCP/IP port to expose from the Pod container, 1-65535 (Optional, no port exposed if not provided)",
+ 					},
++					"output": outputProperty,
+ 				},
+ 				Required: []string{"image"},
+ 			},
+@@ -577,13 +578,21 @@ func podsRun(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to run pod: port must be between 1 and 65535, got %d", portValue)), nil
+ 	}
+ 	port := int32(portValue)
++	full, err := wantFullOutput(p)
++	if err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to run pod: %w", err)), nil
++	}
+ 	resources, err := kubernetes.NewCore(params).PodsRun(params, ns, name, image, port)
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to run pod %s in namespace %s: %w", name, ns, err)), nil
+ 	}
+-	marshalledYaml, err := output.MarshalYaml(resources)
++	marshalledYaml, err := writeResultYaml(resources, full)
+ 	if err != nil {
+ 		err = fmt.Errorf("failed to run pod: %w", err)
+ 	}
+-	return api.NewToolCallResult("# The following resources (YAML) have been created or updated successfully\n"+marshalledYaml, err), nil
++	note := receiptNote
++	if full {
++		note = ""
++	}
++	return api.NewToolCallResult("# The following resources (YAML) have been created or updated successfully\n"+note+marshalledYaml, err), nil
+ }
+diff --git a/pkg/toolsets/core/receipt.go b/pkg/toolsets/core/receipt.go
+new file mode 100644
+index 0000000..99c9a71
+--- /dev/null
++++ b/pkg/toolsets/core/receipt.go
+@@ -0,0 +1,109 @@
++package core
++
++import (
++	"fmt"
++	"strconv"
++
++	"github.com/google/jsonschema-go/jsonschema"
++	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
++	"k8s.io/apimachinery/pkg/runtime/schema"
++
++	"github.com/containers/kubernetes-mcp-server/pkg/api"
++	"github.com/containers/kubernetes-mcp-server/pkg/kubernetes"
++	"github.com/containers/kubernetes-mcp-server/pkg/output"
++)
++
++const (
++	outputReceipt = "receipt"
++	outputFull    = "full"
++)
++
++// outputProperty is the schema of the optional `output` argument of write tools.
++var outputProperty = &jsonschema.Schema{
++	Type: "string",
++	Enum: []any{outputReceipt, outputFull},
++	Description: "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, " +
++		"namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++}
++
++// wantFullOutput reads the `output` argument.
++func wantFullOutput(p *api.Params) (bool, error) {
++	switch v := p.OptionalString("output", outputReceipt); v {
++	case outputReceipt:
++		return false, p.Err()
++	case outputFull:
++		return true, p.Err()
++	default:
++		return false, fmt.Errorf("output must be %q or %q, got %q", outputReceipt, outputFull, v)
++	}
++}
++
++// receiptObject keeps an object's identity and version: what a caller needs to refer
++// to it again or to send a version precondition. Receipts carry no spec, data or status.
++func receiptObject(obj *unstructured.Unstructured) map[string]any {
++	metadata := map[string]any{"name": obj.GetName()}
++	if ns := obj.GetNamespace(); ns != "" {
++		metadata["namespace"] = ns
++	}
++	if uid := obj.GetUID(); uid != "" {
++		metadata["uid"] = string(uid)
++	}
++	if rv := obj.GetResourceVersion(); rv != "" {
++		metadata["resourceVersion"] = rv
++	}
++	if g := obj.GetGeneration(); g != 0 {
++		metadata["generation"] = g
++	}
++	if ts := obj.GetDeletionTimestamp(); ts != nil {
++		metadata["deletionTimestamp"] = ts.UTC().Format("2006-01-02T15:04:05Z")
++	}
++	return map[string]any{
++		"apiVersion": obj.GetAPIVersion(),
++		"kind":       obj.GetKind(),
++		"metadata":   metadata,
++	}
++}
++
++// writeResultYaml renders written objects: receipts by default, whole objects with output: full.
++func writeResultYaml(objs []*unstructured.Unstructured, full bool) (string, error) {
++	if full {
++		return output.MarshalYaml(objs)
++	}
++	receipts := make([]map[string]any, 0, len(objs))
++	for _, obj := range objs {
++		receipts = append(receipts, receiptObject(obj))
++	}
++	return output.MarshalYaml(receipts)
++}
++
++const receiptNote = "# Receipt: identity and version of each object; pass output: full for the whole objects\n"
++
++// scaleResultText renders a resources_scale result. A change is stated as from -> to;
++// the status shown was read with the change, before the controller acted on it.
++func scaleResultText(gvk *schema.GroupVersionKind, scale *unstructured.Unstructured, full bool) (string, error) {
++	desired, _, _ := unstructured.NestedInt64(scale.Object, "spec", "replicas")
++	header := "# Current resource scale (YAML) is below\n"
++	if previous, ok := scale.GetAnnotations()[kubernetes.ScalePreviousReplicasAnnotation]; ok {
++		from, _ := strconv.ParseInt(previous, 10, 64)
++		ref := scale.GetName()
++		if scale.GetNamespace() != "" {
++			ref = scale.GetNamespace() + "/" + scale.GetName()
++		}
++		header = fmt.Sprintf("# %s %s scaled: spec.replicas %d -> %d. The status below was read with the change, before the controller acted on it; read again to see the result\n",
++			gvk.Kind, ref, from, desired)
++	}
++	scale.SetAnnotations(nil)
++	if full {
++		body, err := output.MarshalYaml(scale)
++		return header + body, err
++	}
++	trimmed := receiptObject(scale)
++	trimmed["spec"] = map[string]any{"replicas": desired}
++	if replicas, found, _ := unstructured.NestedInt64(scale.Object, "status", "replicas"); found {
++		trimmed["status"] = map[string]any{"replicas": replicas}
++	} else {
++		trimmed["status"] = map[string]any{"replicas": int64(0)}
++	}
++	body, err := output.MarshalYaml(trimmed)
++	return header + body, err
++}
+diff --git a/pkg/toolsets/core/resources.go b/pkg/toolsets/core/resources.go
+index 5541f7a..f35c912 100644
+--- a/pkg/toolsets/core/resources.go
++++ b/pkg/toolsets/core/resources.go
+@@ -132,6 +132,7 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
+ 						Type:        "string",
+ 						Description: "Complete YAML or JSON representation of the Kubernetes resource (full desired state, not a partial patch). Include apiVersion, kind, metadata, and the full spec. For namespaced resources, include metadata.namespace to specify the target namespace; if omitted, the configured default namespace is used",
+ 					},
++					"output": outputProperty,
+ 				},
+ 				Required: []string{"resource"},
+ 			},
+@@ -215,6 +216,7 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
+ 						Type:        "integer",
+ 						Description: "Optional scale to update the resources scale to. If not provided, will return the current scale of the resource, and not update it",
+ 					},
++					"output": outputProperty,
+ 				},
+ 				Required: []string{"apiVersion", "kind", "name"},
+ 			},
+@@ -424,15 +426,24 @@ func resourcesCreateOrUpdate(params api.ToolHandlerParams) (*api.ToolCallResult,
+ 		return api.NewToolCallResult("", fmt.Errorf("resource is not a string")), nil
+ 	}
+ 
++	full, err := wantFullOutput(api.WrapParams(params))
++	if err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to create or update resources: %w", err)), nil
++	}
++
+ 	resources, err := kubernetes.NewCore(params).ResourcesCreateOrUpdate(params, r)
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to create or update resources: %w", err)), nil
+ 	}
+-	marshalledYaml, err := output.MarshalYaml(resources)
++	marshalledYaml, err := writeResultYaml(resources, full)
+ 	if err != nil {
+ 		err = fmt.Errorf("failed to create or update resources: %w", err)
+ 	}
+-	return api.NewToolCallResult("# The following resources (YAML) have been created or updated successfully\n"+marshalledYaml, err), nil
++	note := receiptNote
++	if full {
++		note = ""
++	}
++	return api.NewToolCallResult("# The following resources (YAML) have been created or updated successfully\n"+note+marshalledYaml, err), nil
+ }
+ 
+ func resourcesDelete(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+@@ -510,17 +521,22 @@ func resourcesScale(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 		}
+ 	}
+ 
++	full, err := wantFullOutput(api.WrapParams(params))
++	if err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to get/update resource scale: %w", err)), nil
++	}
++
+ 	scale, err := kubernetes.NewCore(params).ResourcesScale(params.Context, gvk, ns, n, desiredScale, shouldScale)
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to get/update resource scale: %w", err)), nil
+ 	}
+ 
+-	marshalled, err := output.MarshalYaml(scale)
++	text, err := scaleResultText(gvk, scale, full)
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to marshall scale to yaml format: %v", scale)), nil
+ 	}
+ 
+-	return api.NewToolCallResult("# Current resource scale (YAML) is below\n"+marshalled, err), nil
++	return api.NewToolCallResult(text, nil), nil
+ }
+ 
+ func parseScaleValue(desiredScale interface{}) (int64, error) {

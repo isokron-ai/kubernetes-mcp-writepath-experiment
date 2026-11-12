@@ -1,0 +1,284 @@
+From 3c52e343d1da0463987969efd2a8c7fb0ce5d3af Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 11:26:56 -0700
+Subject: [PATCH 03/14] fix(core): report pods_delete clean-up failures and
+ delete the Pod first
+
+For a Pod created by pods_run, pods_delete also deletes the Service (and,
+on OpenShift, the Route) that pods_run created for it. Two problems:
+
+- Errors from listing or deleting those objects were discarded. When the
+  Service delete was refused (for example by RBAC), the tool still
+  answered "Pod deleted successfully" and the Service stayed.
+- The Service and Route were deleted before the Pod. When the Pod delete
+  was then refused, the call failed, but the Service was already gone
+  and the error did not say so.
+
+The Pod is now deleted first; if that fails nothing else is touched.
+Then the managed Service and Route are listed and deleted, and any error
+other than NotFound is collected. If any remain, the tool returns an
+error that says the Pod was deleted and names each object that was not,
+with the API's reason (PodCleanupError). Pods not created by pods_run
+behave as before.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+(cherry picked from commit 06008007a5c819f27963f4c8c6aa4b56fa5bb2a3)
+---
+ pkg/kubernetes/pods.go      |  58 ++++++++++++----
+ pkg/mcp/pods_delete_test.go | 135 ++++++++++++++++++++++++++++++++++++
+ pkg/toolsets/core/pods.go   |   4 ++
+ 3 files changed, 182 insertions(+), 15 deletions(-)
+ create mode 100644 pkg/mcp/pods_delete_test.go
+
+diff --git a/pkg/kubernetes/pods.go b/pkg/kubernetes/pods.go
+index 9004c74..a3ff446 100644
+--- a/pkg/kubernetes/pods.go
++++ b/pkg/kubernetes/pods.go
+@@ -9,6 +9,7 @@ import (
+ 	"sync"
+ 
+ 	v1 "k8s.io/api/core/v1"
++	apierrors "k8s.io/apimachinery/pkg/api/errors"
+ 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+ 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+ 	labelutil "k8s.io/apimachinery/pkg/labels"
+@@ -80,6 +81,21 @@ func (c *Core) PodsGet(ctx context.Context, namespace, name string) (*unstructur
+ 	}, c.NamespaceOrDefault(namespace), name)
+ }
+ 
++// PodCleanupError is returned by PodsDelete when the Pod was deleted but a
++// Service or Route that pods_run created for it could not be listed or
++// deleted.
++type PodCleanupError struct {
++	Namespace string
++	Name      string
++	Errs      []error
++}
++
++func (e *PodCleanupError) Error() string {
++	return fmt.Sprintf("pod %s/%s was deleted, but its managed resources were not all deleted: %v", e.Namespace, e.Name, errors.Join(e.Errs...))
++}
++
++func (e *PodCleanupError) Unwrap() []error { return e.Errs }
++
+ func (c *Core) PodsDelete(ctx context.Context, namespace, name string) (string, error) {
+ 	namespace = c.NamespaceOrDefault(namespace)
+ 	pod, err := c.ResourcesGet(ctx, &schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Pod"}, namespace, name)
+@@ -93,34 +109,46 @@ func (c *Core) PodsDelete(ctx context.Context, namespace, name string) (string,
+ 		AppKubernetesName:      pod.GetLabels()[AppKubernetesName],
+ 	}.AsSelector()
+ 
++	// Delete the Pod first: if that is refused, its managed Service and Route stay in place.
++	if err := c.ResourcesDelete(ctx, &schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Pod"}, namespace, name, nil); err != nil {
++		return "", err
++	}
++	if !isManaged {
++		return "Pod deleted successfully", nil
++	}
++
++	var cleanupErrs []error
+ 	// Delete managed service
+-	if isManaged {
+-		services := c.CoreV1().Services(namespace)
+-		if sl, _ := services.List(ctx, metav1.ListOptions{
+-			LabelSelector: managedLabelSelector.String(),
+-		}); sl != nil {
+-			for _, svc := range sl.Items {
+-				_ = services.Delete(ctx, svc.Name, metav1.DeleteOptions{})
++	services := c.CoreV1().Services(namespace)
++	if sl, err := services.List(ctx, metav1.ListOptions{LabelSelector: managedLabelSelector.String()}); err != nil {
++		cleanupErrs = append(cleanupErrs, fmt.Errorf("listing its Services: %w", err))
++	} else {
++		for _, svc := range sl.Items {
++			if err := services.Delete(ctx, svc.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
++				cleanupErrs = append(cleanupErrs, fmt.Errorf("service %s: %w", svc.Name, err))
+ 			}
+ 		}
+ 	}
+ 
+ 	// Delete managed Route
+-	if isManaged && c.supportsGroupVersion("route.openshift.io/v1") {
++	if c.supportsGroupVersion("route.openshift.io/v1") {
+ 		routeResources := c.DynamicClient().
+ 			Resource(schema.GroupVersionResource{Group: "route.openshift.io", Version: "v1", Resource: "routes"}).
+ 			Namespace(namespace)
+-		if rl, _ := routeResources.List(ctx, metav1.ListOptions{
+-			LabelSelector: managedLabelSelector.String(),
+-		}); rl != nil {
++		if rl, err := routeResources.List(ctx, metav1.ListOptions{LabelSelector: managedLabelSelector.String()}); err != nil {
++			cleanupErrs = append(cleanupErrs, fmt.Errorf("listing its Routes: %w", err))
++		} else {
+ 			for _, route := range rl.Items {
+-				_ = routeResources.Delete(ctx, route.GetName(), metav1.DeleteOptions{})
++				if err := routeResources.Delete(ctx, route.GetName(), metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
++					cleanupErrs = append(cleanupErrs, fmt.Errorf("route %s: %w", route.GetName(), err))
++				}
+ 			}
+ 		}
+-
+ 	}
+-	return "Pod deleted successfully",
+-		c.ResourcesDelete(ctx, &schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Pod"}, namespace, name, nil)
++	if len(cleanupErrs) > 0 {
++		return "", &PodCleanupError{Namespace: namespace, Name: name, Errs: cleanupErrs}
++	}
++	return "Pod deleted successfully", nil
+ }
+ 
+ func (c *Core) PodsLog(ctx context.Context, namespace, name, container string, previous bool, tail int64) (string, error) {
+diff --git a/pkg/mcp/pods_delete_test.go b/pkg/mcp/pods_delete_test.go
+new file mode 100644
+index 0000000..430a77a
+--- /dev/null
++++ b/pkg/mcp/pods_delete_test.go
+@@ -0,0 +1,135 @@
++package mcp
++
++import (
++	"net/http"
++	"sync"
++	"testing"
++
++	"github.com/modelcontextprotocol/go-sdk/mcp"
++	"github.com/stretchr/testify/suite"
++	v1 "k8s.io/api/core/v1"
++	apierrors "k8s.io/apimachinery/pkg/api/errors"
++	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
++	"k8s.io/apimachinery/pkg/runtime/schema"
++
++	"github.com/containers/kubernetes-mcp-server/internal/test"
++)
++
++// PodsDeleteCleanupSuite covers pods_delete on a Pod created by pods_run, with
++// API answers that envtest's RBAC setup cannot easily produce.
++type PodsDeleteCleanupSuite struct {
++	BaseMcpSuite
++	mockServer *test.MockServer
++	mu         sync.Mutex
++	calls      []string
++}
++
++func (s *PodsDeleteCleanupSuite) SetupTest() {
++	s.BaseMcpSuite.SetupTest()
++	s.calls = nil
++	s.mockServer = test.NewMockServer()
++	discovery := test.NewDiscoveryClientHandler()
++	discovery.APIResourceLists[0].APIResources = append(discovery.APIResourceLists[0].APIResources,
++		metav1.APIResource{Name: "services", Kind: "Service", Namespaced: true, Verbs: metav1.Verbs{"get", "list", "delete"}})
++	s.mockServer.Handle(discovery)
++	s.Cfg.KubeConfig.SetForTest(s.mockServer.KubeconfigFile(s.T()))
++}
++
++func (s *PodsDeleteCleanupSuite) TearDownTest() {
++	s.BaseMcpSuite.TearDownTest()
++	if s.mockServer != nil {
++		s.mockServer.Close()
++	}
++}
++
++func (s *PodsDeleteCleanupSuite) record(r *http.Request) {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	s.calls = append(s.calls, r.Method+" "+r.URL.Path)
++}
++
++func (s *PodsDeleteCleanupSuite) handle(podDelete, serviceDelete int) {
++	managed := map[string]string{
++		"app.kubernetes.io/managed-by": "kubernetes-mcp-server",
++		"app.kubernetes.io/name":       "web",
++	}
++	s.mockServer.Handle(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		switch r.URL.Path {
++		case "/api/v1/namespaces/default/pods/web":
++			s.record(r)
++			if r.Method == http.MethodDelete && podDelete != http.StatusOK {
++				status := apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "web", nil).ErrStatus
++				w.Header().Set("Content-Type", "application/json")
++				w.WriteHeader(podDelete)
++				test.WriteObject(w, &status)
++				return
++			}
++			test.WriteObject(w, &v1.Pod{
++				TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Pod"},
++				ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "default", Labels: managed},
++			})
++		case "/api/v1/namespaces/default/services":
++			s.record(r)
++			test.WriteObject(w, &v1.ServiceList{
++				TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ServiceList"},
++				Items:    []v1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "default", Labels: managed}}},
++			})
++		case "/api/v1/namespaces/default/services/web":
++			s.record(r)
++			if serviceDelete != http.StatusOK {
++				status := apierrors.NewForbidden(schema.GroupResource{Resource: "services"}, "web", nil).ErrStatus
++				w.Header().Set("Content-Type", "application/json")
++				w.WriteHeader(serviceDelete)
++				test.WriteObject(w, &status)
++				return
++			}
++			test.WriteObject(w, &metav1.Status{Status: metav1.StatusSuccess})
++		}
++	}))
++}
++
++func (s *PodsDeleteCleanupSuite) TestServiceDeleteRefused() {
++	s.handle(http.StatusOK, http.StatusForbidden)
++	s.InitMcpClient()
++	result, err := s.CallTool("pods_delete", map[string]interface{}{"name": "web", "namespace": "default"})
++	s.Require().NoError(err)
++	s.Run("returns an error", func() {
++		s.True(result.IsError, "a refused Service delete must not be reported as success")
++	})
++	s.Run("says the Pod was deleted and names the Service", func() {
++		text := result.Content[0].(*mcp.TextContent).Text
++		s.Contains(text, "pod default/web was deleted, but its managed resources were not all deleted")
++		s.Contains(text, "service web")
++	})
++}
++
++func (s *PodsDeleteCleanupSuite) TestPodDeleteRefused() {
++	s.handle(http.StatusForbidden, http.StatusOK)
++	s.InitMcpClient()
++	result, err := s.CallTool("pods_delete", map[string]interface{}{"name": "web", "namespace": "default"})
++	s.Require().NoError(err)
++	s.Run("returns an error", func() {
++		s.True(result.IsError)
++	})
++	s.Run("leaves the managed Service alone", func() {
++		s.mu.Lock()
++		defer s.mu.Unlock()
++		s.NotContains(s.calls, "DELETE /api/v1/namespaces/default/services/web")
++	})
++}
++
++func (s *PodsDeleteCleanupSuite) TestBothDeleted() {
++	s.handle(http.StatusOK, http.StatusOK)
++	s.InitMcpClient()
++	result, err := s.CallTool("pods_delete", map[string]interface{}{"name": "web", "namespace": "default"})
++	s.Require().NoError(err)
++	s.False(result.IsError, "call tool failed: %v", result.Content)
++	s.Equal("Pod deleted successfully", result.Content[0].(*mcp.TextContent).Text)
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	s.Contains(s.calls, "DELETE /api/v1/namespaces/default/services/web")
++}
++
++func TestPodsDeleteCleanup(t *testing.T) {
++	suite.Run(t, new(PodsDeleteCleanupSuite))
++}
+diff --git a/pkg/toolsets/core/pods.go b/pkg/toolsets/core/pods.go
+index 535af74..767674b 100644
+--- a/pkg/toolsets/core/pods.go
++++ b/pkg/toolsets/core/pods.go
+@@ -433,6 +433,10 @@ func podsDelete(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to delete pod: %w", err)), nil
+ 	}
+ 	ret, err := kubernetes.NewCore(params).PodsDelete(params, ns, name)
++	var cleanupErr *kubernetes.PodCleanupError
++	if errors.As(err, &cleanupErr) {
++		return api.NewToolCallResult("", err), nil
++	}
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to delete pod %s in namespace %s: %w", name, ns, err)), nil
+ 	}

@@ -1,0 +1,16 @@
+# Server under test: containers/kubernetes-mcp-server (Apache-2.0, Go), the Kubernetes/OpenShift MCP server.
+KMS_REPO=https://github.com/containers/kubernetes-mcp-server.git
+KMS_TAG=v0.1.2
+KMS_SHA=66553fed5c16454e5814b41e331b4357f15806d8
+# Tree id of that commit. This repository's tag upstream-v0.1.2 holds exactly this tree (build.sh checks it).
+KMS_TREE=d65794e676f0d74b42649d34d2dc9db48a94600f
+# Tag v0.1.2 is a lightweight tag on 66553fed; release published 2026-11-04T19:36:02Z, commit date
+# 2026-11-04T19:28:32Z ("ci: switch to running release on ubuntu-latest (#1622)").
+# go.mod at the pin: `go 1.26.10`; k8s.io/client-go v0.37.1; helm.sh/helm/v3 v3.22.1.
+KMS_GO=1.26.10
+# Committer date of 66553fed as `git show -s --format=%cI` prints it; the measured builds used it as BuildTime.
+KMS_COMMIT_DATE=2026-11-04T14:28:32-05:00
+# The measured builds used go1.26.11 (darwin/arm64) with GOTOOLCHAIN=local.
+MEASURED_GO="go version go1.26.11 darwin/arm64"
+# Upstream main used for the rebased series (experiment-patches/main-13bfb96f/), 2026-11-10T20:30:22Z.
+KMS_MAIN_SHA=13bfb96f1d97c6ac5ff5c1f2643a821c59af88cf

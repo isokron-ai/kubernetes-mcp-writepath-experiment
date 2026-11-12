@@ -1,0 +1,180 @@
+From b33035aba4fe0c684ee8b53c0c7d744b118d2e3a Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 11:40:07 -0700
+Subject: [PATCH 09/14] fix(config): refuse unknown tool names in
+ enabled_tools, opt_in_tools and disabled_tools
+
+Toolset names are validated at start (a typo in `toolsets` exits with
+"invalid toolset name"), but tool names were not. A misspelt entry was
+accepted silently:
+
+- `enabled_tools = ["resources_gett"]` started a server that served no
+  tools at all;
+- `disabled_tools = ["pods_deleet"]` started a server that still served
+  pods_delete, the tool the operator meant to hide;
+- `opt_in_tools` (#1597) has the same shape.
+
+The server now checks the three lists when it is created and when a new
+configuration is loaded: every name must be a tool that one of the
+server's toolsets provides (after the target-list rename). A tool of a
+toolset that is not enabled is a valid name; it is simply not served, as
+documented for opt_in_tools. Otherwise the server refuses to start, or
+rejects the reload, with an error that names the unknown entries.
+
+The check does not run when tools are re-applied after a cluster-state
+change, so a tool that a toolset offers only when the cluster has some
+API cannot stop a running server. Toolsets are asked for their tools
+with the server's cluster inspector, as when tools are applied.
+docs/configuration.md says so.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ docs/configuration.md     |  6 ++---
+ pkg/mcp/mcp.go            | 51 +++++++++++++++++++++++++++++++++++++++
+ pkg/mcp/mcp_tools_test.go | 25 +++++++++++++++++++
+ 3 files changed, 79 insertions(+), 3 deletions(-)
+
+diff --git a/docs/configuration.md b/docs/configuration.md
+index ff0259f..f9c7b4f 100644
+--- a/docs/configuration.md
++++ b/docs/configuration.md
+@@ -671,9 +671,9 @@ Fine-grained control over individual tools within enabled toolsets.
+ 
+ | Field | Type | Default | Description |
+ |-------|------|---------|-------------|
+-| `enabled_tools` | string[] | `[]` | Allowlist of specific tools to enable. When set, only these tools are registered. See [Cluster authorization](#cluster-authorization). |
+-| `opt_in_tools` | string[] | `[]` | Additional tools to enable on top of the current selection, whether that is the default selection or an explicit `enabled_tools` allowlist. |
+-| `disabled_tools` | string[] | `[]` | Denylist of specific tools to unregister. Applied after `enabled_tools`. See [Cluster authorization](#cluster-authorization). |
++| `enabled_tools` | string[] | `[]` | Allowlist of specific tools to enable. When set, only these tools are registered. Every name must be a tool of a toolset this server provides, or the server refuses to start (or to reload). See [Cluster authorization](#cluster-authorization). |
++| `opt_in_tools` | string[] | `[]` | Additional tools to enable on top of the current selection, whether that is the default selection or an explicit `enabled_tools` allowlist. Every name must be a tool of a toolset this server provides, or the server refuses to start (or to reload). |
++| `disabled_tools` | string[] | `[]` | Denylist of specific tools to unregister. Applied after `enabled_tools`. Every name must be a tool of a toolset this server provides, or the server refuses to start (or to reload). See [Cluster authorization](#cluster-authorization). |
+ 
+ The owning toolset must be enabled in `toolsets` for a tool to be available. Neither `enabled_tools` nor `opt_in_tools` enables a toolset automatically. All selections remain subject to `read_only`, `disable_destructive`, and other tool availability filters.
+ 
+diff --git a/pkg/mcp/mcp.go b/pkg/mcp/mcp.go
+index 13c4b37..f5fc1ef 100644
+--- a/pkg/mcp/mcp.go
++++ b/pkg/mcp/mcp.go
+@@ -8,6 +8,7 @@ import (
+ 	"net/http"
+ 	"reflect"
+ 	"slices"
++	"strings"
+ 	"sync"
+ 	"sync/atomic"
+ 	"time"
+@@ -221,6 +222,9 @@ func NewServer(ctx context.Context, configuration Configuration, targetProvider
+ 	// path entirely; protocolSendingMiddleware makes them visible at V(6).
+ 	s.server.AddSendingMiddleware(protocolSendingMiddleware)
+ 
++	if err = s.validateToolNames(ctx, s.configuration.Load()); err != nil {
++		return nil, err
++	}
+ 	err = s.applyToolsets(ctx, s.configuration.Load())
+ 	if err != nil {
+ 		return nil, err
+@@ -486,6 +490,45 @@ func (s *Server) collectApplicableTools(ctx context.Context, cfg *Configuration)
+ 	return tools
+ }
+ 
++// validateToolNames refuses enabled_tools, opt_in_tools and disabled_tools entries that
++// name no tool of any toolset this server provides. A misspelt name otherwise starts the
++// server with no tools (enabled_tools) or with the tool the operator meant to hide
++// (disabled_tools). A tool of a toolset that is not enabled is a valid name (it is simply
++// not served). It runs at start and on configuration reload, not when cluster state
++// changes, so a tool that a toolset offers only on some clusters cannot stop a running server.
++func (s *Server) validateToolNames(ctx context.Context, cfg *Configuration) error {
++	enabled, optIn, disabled := cfg.EnabledTools.Get(), cfg.OptInTools.Get(), cfg.DisabledTools.Get()
++	if len(enabled) == 0 && len(optIn) == 0 && len(disabled) == 0 {
++		return nil
++	}
++	known := map[string]bool{}
++	rename := WithTargetListTool(s.p.GetDefaultTarget(), s.p.GetTargetParameterName(), s.p)
++	toolsetContext := s.toolsetContext(cfg)
++	for _, toolset := range toolsets.Toolsets() {
++		for _, tool := range toolset.GetTools(ctx, toolsetContext) {
++			known[tool.Tool.Name] = true
++			known[rename(tool).Tool.Name] = true
++		}
++	}
++	var errs []error
++	for _, option := range []struct {
++		name  string
++		names []string
++	}{{"enabled_tools", enabled}, {"opt_in_tools", optIn}, {"disabled_tools", disabled}} {
++		var unknown []string
++		for _, name := range option.names {
++			if !known[name] {
++				unknown = append(unknown, name)
++			}
++		}
++		if len(unknown) > 0 {
++			errs = append(errs, fmt.Errorf("%s names tools that no toolset provides: %s (toolsets: %s)",
++				option.name, strings.Join(unknown, ", "), strings.Join(toolsets.ToolsetNames(), ", ")))
++		}
++	}
++	return errors.Join(errs...)
++}
++
+ func (s *Server) toolsetContext(cfg *Configuration) api.ToolsetContext {
+ 	return api.ToolsetContext{
+ 		Inspector:                         internalk8s.NewClusterInspector(s.p),
+@@ -724,6 +767,14 @@ func (s *Server) ReloadConfiguration(ctx context.Context, newConfig *config.Conf
+ 		if prev := s.configuration.Load(); prev != nil {
+ 			candidate.SDKLogger = prev.SDKLogger
+ 		}
++		if err := s.validateToolNames(ctx, candidate); err != nil {
++			if prev := s.configuration.Load(); prev != nil && prev.Config != nil {
++				if rbErr := s.p.ReloadConfig(ctx, prev.Config); rbErr != nil {
++					logger.Error(rbErr, "Failed to roll back kubernetes provider config after tool name validation failure")
++				}
++			}
++			return fmt.Errorf("%w: %w", ErrReloadRejected, err)
++		}
+ 		if err := s.applyToolsetsLocked(ctx, candidate); err != nil {
+ 			if prev := s.configuration.Load(); prev != nil && prev.Config != nil {
+ 				if rbErr := s.p.ReloadConfig(ctx, prev.Config); rbErr != nil {
+diff --git a/pkg/mcp/mcp_tools_test.go b/pkg/mcp/mcp_tools_test.go
+index 146fcb4..3df7d27 100644
+--- a/pkg/mcp/mcp_tools_test.go
++++ b/pkg/mcp/mcp_tools_test.go
+@@ -11,7 +11,9 @@ import (
+ 	"k8s.io/client-go/kubernetes"
+ 
+ 	"github.com/containers/kubernetes-mcp-server/internal/test"
++	"github.com/containers/kubernetes-mcp-server/pkg/config"
+ 	"github.com/containers/kubernetes-mcp-server/pkg/config/configtest"
++	internalk8s "github.com/containers/kubernetes-mcp-server/pkg/kubernetes"
+ )
+ 
+ // McpToolProcessingSuite tests MCP tool processing (isToolApplicable)
+@@ -167,6 +169,29 @@ func (s *McpToolProcessingSuite) TestOptInToolsWithEmptyAllowlist() {
+ 	s.Equal("pods_list", tools.Tools[0].Name)
+ }
+ 
++func (s *McpToolProcessingSuite) TestUnknownToolNamesFailAtStart() {
++	for _, tc := range []struct{ option, toml string }{
++		{"enabled_tools", `enabled_tools = [ "resources_gett" ]`},
++		{"disabled_tools", `disabled_tools = [ "pods_deleet" ]`},
++		{"opt_in_tools", `opt_in_tools = [ "configuration_vieww" ]`},
++	} {
++		s.Run(tc.option+" with a misspelt tool name", func() {
++			cfg := config.BaseDefault()
++			cfg.KubeConfig.SetForTest(s.Cfg.KubeConfig.Get())
++			configtest.OverlayTOML(s.T(), &cfg, tc.toml)
++			provider, err := internalk8s.NewProvider(s.T().Context(), cfg)
++			s.Require().NoError(err)
++			defer provider.Close()
++			server, err := NewServer(s.T().Context(), Configuration{Config: cfg}, provider)
++			if server != nil {
++				defer server.Close()
++			}
++			s.Require().Error(err, "the server must not start with an unknown tool name")
++			s.Contains(err.Error(), tc.option+" names tools that no toolset provides")
++		})
++	}
++}
++
+ func (s *McpToolProcessingSuite) TestDisabledTools() {
+ 	configtest.OverlayTOML(s.T(), &s.Cfg, `
+ 		disabled_tools = [ "namespaces_list", "events_list" ]

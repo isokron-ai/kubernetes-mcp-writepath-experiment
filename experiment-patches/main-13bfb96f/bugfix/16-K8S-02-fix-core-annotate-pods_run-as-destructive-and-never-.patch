@@ -1,0 +1,334 @@
+From ba4877ac24d3fa10fb1c7730cb70fe3ad2699002 Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 11:52:13 -0700
+Subject: [PATCH 2/2] fix(core): annotate pods_run as destructive and never
+ take over existing objects
+
+pods_run was annotated destructiveHint false, so it stayed in the tool
+list under disable_destructive (the only non-read tool that did) and
+confirmation rules keyed on the annotation never matched it. Yet it
+force-applies its Pod, Service and Route: given the name of an existing
+Service that exposes the same port, it took that Service over, replacing
+its type (dropping a nodePort) and its whole selector, so the Service's
+traffic went to the new Pod. With a different port the merged Service
+was invalid and the call failed after the Pod had been created.
+resources_create_or_update, which uses the same apply, is annotated
+destructive.
+
+pods_run now:
+- checks, before the first write, every object it is about to apply; an
+  existing Pod, Service or Route of that name that pods_run did not
+  create (managed-by label and name label) makes the call fail with an
+  error naming it, and nothing is created or changed. Objects created
+  by an earlier pods_run call with the same name are re-applied as
+  before;
+- is annotated destructiveHint true, because that re-apply replaces the
+  fields of the earlier Pod, Service and Route. It is therefore hidden
+  under disable_destructive;
+- declares the get verb it now uses in its RBAC metadata.
+
+The tool catalog snapshots change accordingly.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ pkg/kubernetes/pods.go                        | 21 +++++++
+ pkg/mcp/pods_run_test.go                      | 58 +++++++++++++++++++
+ pkg/mcp/testdata/toolsets-core-tools.json     |  5 +-
+ .../toolsets-full-tools-multicluster.json     |  5 +-
+ .../toolsets-full-tools-openshift.json        |  5 +-
+ pkg/mcp/testdata/toolsets-full-tools.json     |  5 +-
+ pkg/toolsets/core/pods.go                     | 12 ++--
+ 7 files changed, 102 insertions(+), 9 deletions(-)
+
+diff --git a/pkg/kubernetes/pods.go b/pkg/kubernetes/pods.go
+index 8187f95..be8b451 100644
+--- a/pkg/kubernetes/pods.go
++++ b/pkg/kubernetes/pods.go
+@@ -284,6 +284,27 @@ func (c *Core) PodsRun(ctx context.Context, namespace, name, image string, port
+ 		}
+ 		toCreate = append(toCreate, u)
+ 	}
++	// pods_run creates its Pod, Service and Route; it re-applies them only if a previous
++	// pods_run call created them. An existing object of the same name that it did not
++	// create is never taken over (the apply is forced, so it would replace the object's
++	// fields, such as a Service's type and selector). Checked before the first write.
++	for _, u := range toCreate {
++		gvk := u.GroupVersionKind()
++		gvr, err := c.resourceFor(&gvk)
++		if err != nil {
++			return nil, err
++		}
++		existing, err := c.DynamicClient().Resource(*gvr).Namespace(u.GetNamespace()).Get(ctx, u.GetName(), metav1.GetOptions{})
++		if apierrors.IsNotFound(err) {
++			continue
++		}
++		if err != nil {
++			return nil, fmt.Errorf("failed to check for an existing %s %s/%s: %w", gvk.Kind, u.GetNamespace(), u.GetName(), err)
++		}
++		if existing.GetLabels()[AppKubernetesManagedBy] != version.BinaryName || existing.GetLabels()[AppKubernetesName] != name {
++			return nil, fmt.Errorf("%s %s/%s already exists and was not created by pods_run; nothing was created or changed: choose another name", gvk.Kind, u.GetNamespace(), u.GetName())
++		}
++	}
+ 	return c.resourcesCreateOrUpdate(ctx, toCreate)
+ }
+ 
+diff --git a/pkg/mcp/pods_run_test.go b/pkg/mcp/pods_run_test.go
+index ba8ae87..e076f06 100644
+--- a/pkg/mcp/pods_run_test.go
++++ b/pkg/mcp/pods_run_test.go
+@@ -8,7 +8,12 @@ import (
+ 	"github.com/containers/kubernetes-mcp-server/pkg/config/configtest"
+ 	"github.com/modelcontextprotocol/go-sdk/mcp"
+ 	"github.com/stretchr/testify/suite"
++	corev1 "k8s.io/api/core/v1"
++	apierrors "k8s.io/apimachinery/pkg/api/errors"
++	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+ 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
++	"k8s.io/apimachinery/pkg/util/intstr"
++	"k8s.io/client-go/kubernetes"
+ 	"sigs.k8s.io/yaml"
+ )
+ 
+@@ -97,6 +102,59 @@ func (s *PodsRunSuite) TestPodsRun() {
+ 	})
+ }
+ 
++func (s *PodsRunSuite) TestPodsRunDoesNotTakeOverExistingService() {
++	s.InitMcpClient()
++	client := kubernetes.NewForConfigOrDie(test.EnvTestRestConfig())
++	_, err := client.CoreV1().Services("default").Create(s.T().Context(), &corev1.Service{
++		ObjectMeta: metav1.ObjectMeta{Name: "someone-elses-svc"},
++		Spec: corev1.ServiceSpec{
++			Type:     corev1.ServiceTypeNodePort,
++			Selector: map[string]string{"app": "theirs"},
++			Ports:    []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt32(8080)}},
++		},
++	}, metav1.CreateOptions{})
++	s.Require().NoError(err)
++	toolResult, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "name": "someone-elses-svc", "port": 80})
++	s.Require().NoError(err)
++	s.Run("returns an error naming the Service", func() {
++		s.True(toolResult.IsError)
++		s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "Service default/someone-elses-svc already exists and was not created by pods_run")
++	})
++	s.Run("leaves the Service unchanged", func() {
++		svc, getErr := client.CoreV1().Services("default").Get(s.T().Context(), "someone-elses-svc", metav1.GetOptions{})
++		s.Require().NoError(getErr)
++		s.Equal(corev1.ServiceTypeNodePort, svc.Spec.Type)
++		s.Equal(map[string]string{"app": "theirs"}, svc.Spec.Selector)
++	})
++	s.Run("creates no Pod", func() {
++		_, getErr := client.CoreV1().Pods("default").Get(s.T().Context(), "someone-elses-svc", metav1.GetOptions{})
++		s.True(apierrors.IsNotFound(getErr))
++	})
++}
++
++func (s *PodsRunSuite) TestPodsRunRerunKeepsWorking() {
++	s.InitMcpClient()
++	for i := 0; i < 2; i++ {
++		toolResult, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "name": "rerun-pod", "port": 80})
++		s.Require().NoError(err)
++		s.Falsef(toolResult.IsError, "call %d failed: %v", i+1, toolResult.Content)
++	}
++}
++
++func (s *PodsRunSuite) TestPodsRunIsAnnotatedDestructive() {
++	s.InitMcpClient()
++	tools, err := s.ListTools()
++	s.Require().NoError(err)
++	for _, tool := range tools.Tools {
++		if tool.Name == "pods_run" {
++			s.Require().NotNil(tool.Annotations.DestructiveHint)
++			s.True(*tool.Annotations.DestructiveHint, "pods_run re-applies over existing objects and must be hidden by disable_destructive")
++			return
++		}
++	}
++	s.Fail("pods_run not listed")
++}
++
+ func (s *PodsRunSuite) TestPodsRunDenied() {
+ 	configtest.OverlayTOML(s.T(), &s.Cfg, `
+ 		denied_resources = [ { version = "v1", kind = "Pod" } ]
+diff --git a/pkg/mcp/testdata/toolsets-core-tools.json b/pkg/mcp/testdata/toolsets-core-tools.json
+index a5855c8..ca0ccb1 100644
+--- a/pkg/mcp/testdata/toolsets-core-tools.json
++++ b/pkg/mcp/testdata/toolsets-core-tools.json
+@@ -778,6 +778,7 @@
+                 }
+               },
+               "verbs": [
++                "get",
+                 "create",
+                 "patch"
+               ]
+@@ -792,6 +793,7 @@
+                 }
+               },
+               "verbs": [
++                "get",
+                 "create",
+                 "patch"
+               ]
+@@ -807,6 +809,7 @@
+                 }
+               },
+               "verbs": [
++                "get",
+                 "create",
+                 "patch"
+               ]
+@@ -817,7 +820,7 @@
+       }
+     },
+     "annotations": {
+-      "destructiveHint": false,
++      "destructiveHint": true,
+       "idempotentHint": false,
+       "openWorldHint": true,
+       "readOnlyHint": false,
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+index 9567074..106742d 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+@@ -875,6 +875,7 @@
+                 }
+               },
+               "verbs": [
++                "get",
+                 "create",
+                 "patch"
+               ]
+@@ -889,6 +890,7 @@
+                 }
+               },
+               "verbs": [
++                "get",
+                 "create",
+                 "patch"
+               ]
+@@ -904,6 +906,7 @@
+                 }
+               },
+               "verbs": [
++                "get",
+                 "create",
+                 "patch"
+               ]
+@@ -914,7 +917,7 @@
+       }
+     },
+     "annotations": {
+-      "destructiveHint": false,
++      "destructiveHint": true,
+       "idempotentHint": false,
+       "openWorldHint": true,
+       "readOnlyHint": false,
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-openshift.json b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+index b8b6c25..5d91cd4 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-openshift.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+@@ -805,6 +805,7 @@
+                 }
+               },
+               "verbs": [
++                "get",
+                 "create",
+                 "patch"
+               ]
+@@ -819,6 +820,7 @@
+                 }
+               },
+               "verbs": [
++                "get",
+                 "create",
+                 "patch"
+               ]
+@@ -834,6 +836,7 @@
+                 }
+               },
+               "verbs": [
++                "get",
+                 "create",
+                 "patch"
+               ]
+@@ -844,7 +847,7 @@
+       }
+     },
+     "annotations": {
+-      "destructiveHint": false,
++      "destructiveHint": true,
+       "idempotentHint": false,
+       "openWorldHint": true,
+       "readOnlyHint": false,
+diff --git a/pkg/mcp/testdata/toolsets-full-tools.json b/pkg/mcp/testdata/toolsets-full-tools.json
+index b8b6c25..5d91cd4 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools.json
++++ b/pkg/mcp/testdata/toolsets-full-tools.json
+@@ -805,6 +805,7 @@
+                 }
+               },
+               "verbs": [
++                "get",
+                 "create",
+                 "patch"
+               ]
+@@ -819,6 +820,7 @@
+                 }
+               },
+               "verbs": [
++                "get",
+                 "create",
+                 "patch"
+               ]
+@@ -834,6 +836,7 @@
+                 }
+               },
+               "verbs": [
++                "get",
+                 "create",
+                 "patch"
+               ]
+@@ -844,7 +847,7 @@
+       }
+     },
+     "annotations": {
+-      "destructiveHint": false,
++      "destructiveHint": true,
+       "idempotentHint": false,
+       "openWorldHint": true,
+       "readOnlyHint": false,
+diff --git a/pkg/toolsets/core/pods.go b/pkg/toolsets/core/pods.go
+index fdfde5a..413deee 100644
+--- a/pkg/toolsets/core/pods.go
++++ b/pkg/toolsets/core/pods.go
+@@ -336,23 +336,25 @@ func initPods(inspector api.ClusterInspector) []api.ServerTool {
+ 				Required: []string{"image"},
+ 			},
+ 			Annotations: api.ToolAnnotations{
+-				Title:           "Pods: Run",
+-				DestructiveHint: ptr.To(false),
++				Title: "Pods: Run",
++				// Re-running pods_run with the same name force-applies over the Pod, Service and
++				// Route an earlier call created, replacing their fields.
++				DestructiveHint: ptr.To(true),
+ 				OpenWorldHint:   ptr.To(true),
+ 			},
+ 		}, RBAC: api.RBACBounded(
+ 			api.RBACRequirement{
+-				Verbs:     []string{"create", "patch"},
++				Verbs:     []string{"get", "create", "patch"},
+ 				Target:    api.RBACTarget{Resource: &api.RBACResourceTarget{Resource: "pods"}},
+ 				Namespace: &api.RBACNamespace{Argument: "namespace"},
+ 			},
+ 			api.RBACRequirement{
+-				Verbs:     []string{"create", "patch"},
++				Verbs:     []string{"get", "create", "patch"},
+ 				Target:    api.RBACTarget{Resource: &api.RBACResourceTarget{Resource: "services"}},
+ 				Namespace: &api.RBACNamespace{Argument: "namespace"},
+ 			},
+ 			api.RBACRequirement{
+-				Verbs: []string{"create", "patch"},
++				Verbs: []string{"get", "create", "patch"},
+ 				Target: api.RBACTarget{Resource: &api.RBACResourceTarget{
+ 					APIGroup: "route.openshift.io",
+ 					Resource: "routes",

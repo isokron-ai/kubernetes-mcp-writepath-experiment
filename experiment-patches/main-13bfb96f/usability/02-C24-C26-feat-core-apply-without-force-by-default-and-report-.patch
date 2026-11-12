@@ -1,0 +1,454 @@
+From 82afaa906c9afa74c3cc0731e77254da23bc71b1 Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 12:03:35 -0700
+Subject: [PATCH 02/19] feat(core): apply without force by default and report
+ field conflicts; add create-only mode (C24, C26)
+
+resources_create_or_update force-applies every manifest. Combined with
+its description's recipe ("fetch it with resources_get, modify it, then
+re-apply the full resource"), that loses concurrent changes: on the
+native session (job 17) another writer changed MAX_CONNECTIONS between
+the agent's read and its write, the agent's full copy took the field
+back to the old value with force, the tool answered success, and the
+agent told the user the other keys were unchanged. Without force the
+API refuses such a write with a field-ownership conflict.
+
+Changes:
+- Server-side apply is no longer forced by default. A conflict is
+  returned as a FieldConflictError that names the object and each
+  conflicting field with the manager that owns it, and says how to
+  proceed: send only the fields you mean to change, or pass
+  `force: true` to take them over. Nothing is written for that
+  document.
+- `force: true` restores the previous behaviour.
+- `mode: create` (C26) creates each object with a POST instead of
+  applying it. An existing object of the same name is never modified;
+  the error names it and its field managers. Without it, avoiding an
+  overwrite costs a read before every create (job 16), and a careless
+  agent overwrites.
+- pods_run and vm_create keep forcing, on objects they have already
+  checked are their own (or new).
+
+Trade-off: forcing is a deliberate upstream choice (#799, H-04), meant
+to make re-applies of the tool's own manifests never fail. With this
+change a re-apply that touches fields another manager has since taken
+fails until the caller drops those fields or passes force: true. That
+is the point of the change, but it is a behaviour change, and
+upstream would see it as a proposal, not a fix.
+
+TestResourcesCreateOrUpdateForcesSSA asserted the forced takeover; it
+now passes force: true. New tests cover the refused stale copy (the
+other writer's value is kept), a minimal manifest that succeeds next to
+another manager's fields, and mode: create.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ pkg/kubernetes/resources.go                   | 125 +++++++++++++++++-
+ pkg/mcp/resources_test.go                     |  69 +++++++++-
+ pkg/mcp/testdata/toolsets-core-tools.json     |  12 ++
+ .../toolsets-full-tools-multicluster.json     |  12 ++
+ .../toolsets-full-tools-openshift.json        |  12 ++
+ pkg/mcp/testdata/toolsets-full-tools.json     |  12 ++
+ pkg/toolsets/core/resources.go                |  24 +++-
+ 7 files changed, 258 insertions(+), 8 deletions(-)
+
+diff --git a/pkg/kubernetes/resources.go b/pkg/kubernetes/resources.go
+index b95043f..f286c4e 100644
+--- a/pkg/kubernetes/resources.go
++++ b/pkg/kubernetes/resources.go
+@@ -7,9 +7,12 @@ import (
+ 	"errors"
+ 	"fmt"
+ 	"io"
++	"regexp"
++	"slices"
+ 	"strconv"
+ 	"strings"
+ 
++	apierrors "k8s.io/apimachinery/pkg/api/errors"
+ 	"k8s.io/apimachinery/pkg/api/meta"
+ 	"k8s.io/apimachinery/pkg/runtime"
+ 
+@@ -21,6 +24,7 @@ import (
+ 	"k8s.io/apimachinery/pkg/runtime/schema"
+ 	"k8s.io/apimachinery/pkg/util/yaml"
+ 	"k8s.io/client-go/discovery"
++	"k8s.io/client-go/dynamic"
+ )
+ 
+ const (
+@@ -68,11 +72,27 @@ func (c *Core) ResourcesGet(ctx context.Context, gvk *schema.GroupVersionKind, n
+ }
+ 
+ func (c *Core) ResourcesCreateOrUpdate(ctx context.Context, resource string) ([]*unstructured.Unstructured, error) {
++	return c.ResourcesApply(ctx, resource, ApplyOptions{Force: true})
++}
++
++// ApplyOptions controls how ResourcesApply writes each document.
++type ApplyOptions struct {
++	// Force takes over fields owned by other field managers (server-side apply force).
++	// Without it, a field owned by another manager makes the API refuse the write with a
++	// conflict, which is returned as a FieldConflictError.
++	Force bool
++	// CreateOnly creates each object (POST) instead of applying it: an existing object of
++	// the same name is never modified, and the call fails with an AlreadyExistsError.
++	CreateOnly bool
++}
++
++// ResourcesApply parses a YAML or JSON manifest stream and writes every document.
++func (c *Core) ResourcesApply(ctx context.Context, resource string, opts ApplyOptions) ([]*unstructured.Unstructured, error) {
+ 	parsedResources, err := ParseManifests(resource)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	return c.resourcesCreateOrUpdate(ctx, parsedResources)
++	return c.resourcesApply(ctx, parsedResources, opts)
+ }
+ 
+ // ResourcesApplyObject server-side applies one object that the caller built as
+@@ -292,6 +312,10 @@ func joinOutcomes(outcomes []ApplyOutcome) string {
+ }
+ 
+ func (c *Core) resourcesCreateOrUpdate(ctx context.Context, resources []*unstructured.Unstructured) ([]*unstructured.Unstructured, error) {
++	return c.resourcesApply(ctx, resources, ApplyOptions{Force: true})
++}
++
++func (c *Core) resourcesApply(ctx context.Context, resources []*unstructured.Unstructured, opts ApplyOptions) ([]*unstructured.Unstructured, error) {
+ 	// Resolve every document's resource and namespace before the first write, so an
+ 	// unknown kind or apiVersion fails the call with nothing applied. A kind defined by a
+ 	// CustomResourceDefinition earlier in the same input cannot resolve yet; it is
+@@ -353,10 +377,23 @@ func (c *Core) resourcesCreateOrUpdate(ctx context.Context, resources []*unstruc
+ 			outcomes[i].Namespace = namespace
+ 		}
+ 		obj.SetNamespace(namespaces[i])
+-		applied, err := c.DynamicClient().Resource(*gvrs[i]).Namespace(namespaces[i]).Apply(ctx, obj.GetName(), obj, metav1.ApplyOptions{
+-			FieldManager: version.BinaryName,
+-			Force:        true,
+-		})
++		client := c.DynamicClient().Resource(*gvrs[i]).Namespace(namespaces[i])
++		var applied *unstructured.Unstructured
++		var err error
++		if opts.CreateOnly {
++			applied, err = client.Create(ctx, obj, metav1.CreateOptions{FieldManager: version.BinaryName})
++			if apierrors.IsAlreadyExists(err) {
++				err = c.alreadyExists(ctx, client, outcomes[i], err)
++			}
++		} else {
++			applied, err = client.Apply(ctx, obj.GetName(), obj, metav1.ApplyOptions{
++				FieldManager: version.BinaryName,
++				Force:        opts.Force,
++			})
++			if !opts.Force && apierrors.IsConflict(err) {
++				err = fieldConflict(outcomes[i], err)
++			}
++		}
+ 		if err != nil {
+ 			return nil, partial(i, err)
+ 		}
+@@ -369,6 +406,84 @@ func (c *Core) resourcesCreateOrUpdate(ctx context.Context, resources []*unstruc
+ 	return resources, nil
+ }
+ 
++// FieldConflictError is a server-side apply refused because fields in the manifest
++// are owned by other field managers (someone else set them since, or set them first).
++type FieldConflictError struct {
++	Object    ApplyOutcome
++	Conflicts []string // "<field> (manager <name>)"
++	Err       error
++}
++
++func (e *FieldConflictError) Error() string {
++	return fmt.Sprintf("%s was not applied: it sets fields owned by other field managers: %s. Send only the fields you mean to change "+
++		"(fields you leave out keep their values), re-reading the object first if needed, or pass force: true to take these fields over",
++		e.Object.ref(), strings.Join(e.Conflicts, "; "))
++}
++
++func (e *FieldConflictError) Unwrap() error { return e.Err }
++
++var conflictCause = regexp.MustCompile(`^conflict with "([^"]*)"`)
++
++func fieldConflict(o ApplyOutcome, err error) error {
++	var statusErr apierrors.APIStatus
++	if !errors.As(err, &statusErr) || statusErr.Status().Details == nil {
++		return err
++	}
++	var conflicts []string
++	for _, cause := range statusErr.Status().Details.Causes {
++		if cause.Type != metav1.CauseTypeFieldManagerConflict {
++			continue
++		}
++		manager := "unknown"
++		if m := conflictCause.FindStringSubmatch(cause.Message); m != nil {
++			manager = m[1]
++		}
++		conflicts = append(conflicts, fmt.Sprintf("%s (manager %s)", cause.Field, manager))
++	}
++	if len(conflicts) == 0 {
++		return err
++	}
++	return &FieldConflictError{Object: o, Conflicts: conflicts, Err: err}
++}
++
++// AlreadyExistsError is a create-only write refused because the object exists.
++type AlreadyExistsError struct {
++	Object   ApplyOutcome
++	Managers []string
++	Err      error
++}
++
++func (e *AlreadyExistsError) Error() string {
++	owners := ""
++	if len(e.Managers) > 0 {
++		owners = " (its fields are managed by " + strings.Join(e.Managers, ", ") + ")"
++	}
++	return fmt.Sprintf("%s already exists%s and was not modified (mode: create): choose another name, or apply over it with mode: apply", e.Object.ref(), owners)
++}
++
++func (e *AlreadyExistsError) Unwrap() error { return e.Err }
++
++func (c *Core) alreadyExists(ctx context.Context, client dynamic.ResourceInterface, o ApplyOutcome, err error) error {
++	existing, getErr := client.Get(ctx, o.Name, metav1.GetOptions{})
++	var managers []string
++	if getErr == nil {
++		for _, mf := range existing.GetManagedFields() {
++			if !slices.Contains(managers, mf.Manager) {
++				managers = append(managers, mf.Manager)
++			}
++		}
++	}
++	return &AlreadyExistsError{Object: o, Managers: managers, Err: err}
++}
++
++func (o ApplyOutcome) ref() string {
++	ref := o.Name
++	if o.Namespace != "" {
++		ref = o.Namespace + "/" + o.Name
++	}
++	return o.Kind + " " + ref
++}
++
+ // APIResourceInfo describes one Kubernetes API resource type registered on
+ // the cluster: its preferred apiVersion, kind, plural resource name, and
+ // whether it's namespaced. Mirrors the fields `kubectl api-resources` shows.
+diff --git a/pkg/mcp/resources_test.go b/pkg/mcp/resources_test.go
+index 04aeb64..e1ed748 100644
+--- a/pkg/mcp/resources_test.go
++++ b/pkg/mcp/resources_test.go
+@@ -736,9 +736,9 @@ func (s *ResourcesSuite) TestResourcesCreateOrUpdateForcesSSA() {
+ 		s.Require().NoError(err, "failed to create ConfigMap with other-manager")
+ 
+ 		// Use resources_create_or_update to update the same field owned by "other-manager"
+-		// Without Force: true, this would fail with a conflict error
++		// Without force: true, this fails with a conflict error (see TestResourcesCreateOrUpdateFieldConflicts)
+ 		updatedCmYaml := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm-force-ssa-test\n  namespace: default\ndata:\n  key: updated-value\n"
+-		toolResult, err := s.CallTool("resources_create_or_update", map[string]interface{}{"resource": updatedCmYaml})
++		toolResult, err := s.CallTool("resources_create_or_update", map[string]interface{}{"resource": updatedCmYaml, "force": true})
+ 		s.Nilf(err, "call tool failed %v", err)
+ 		s.Falsef(toolResult.IsError, "call tool should not fail, got: %v", toolResult.Content)
+ 
+@@ -1486,6 +1486,71 @@ func (s *ResourcesSuite) TestResourcesScaleStatesTheChange() {
+ 	})
+ }
+ 
++func (s *ResourcesSuite) TestResourcesCreateOrUpdateFieldConflicts() {
++	s.InitMcpClient()
++	dynamicClient := dynamic.NewForConfigOrDie(test.EnvTestRestConfig())
++	cmResource := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}
++	other := &unstructured.Unstructured{Object: map[string]interface{}{
++		"apiVersion": "v1",
++		"kind":       "ConfigMap",
++		"metadata":   map[string]interface{}{"name": "cm-conflict-test", "namespace": "default"},
++		"data":       map[string]interface{}{"MAX_CONNECTIONS": "200", "LOG_LEVEL": "info"},
++	}}
++	_, err := dynamicClient.Resource(cmResource).Namespace("default").Apply(
++		s.T().Context(), "cm-conflict-test", other, metav1.ApplyOptions{FieldManager: "other-writer"})
++	s.Require().NoError(err)
++	stale := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm-conflict-test\n  namespace: default\ndata:\n  MAX_CONNECTIONS: \"100\"\n  LOG_LEVEL: debug\n"
++	s.Run("a stale full copy is refused by default", func() {
++		toolResult, err := s.CallTool("resources_create_or_update", map[string]interface{}{"resource": stale})
++		s.Require().NoError(err)
++		s.True(toolResult.IsError, "a write over another manager's fields must not succeed silently")
++		text := toolResult.Content[0].(*mcp.TextContent).Text
++		s.Contains(text, "ConfigMap default/cm-conflict-test was not applied")
++		s.Contains(text, ".data.MAX_CONNECTIONS (manager other-writer)")
++		current, getErr := dynamicClient.Resource(cmResource).Namespace("default").Get(s.T().Context(), "cm-conflict-test", metav1.GetOptions{})
++		s.Require().NoError(getErr)
++		value, _, _ := unstructured.NestedString(current.Object, "data", "MAX_CONNECTIONS")
++		s.Equal("200", value, "the other writer's value must be kept")
++	})
++	s.Run("a minimal manifest with only the changed field succeeds", func() {
++		toolResult, err := s.CallTool("resources_create_or_update", map[string]interface{}{
++			"resource": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm-conflict-test\n  namespace: default\ndata:\n  DEBUG_PORT: \"9000\"\n",
++		})
++		s.Require().NoError(err)
++		s.Falsef(toolResult.IsError, "call tool failed: %v", toolResult.Content)
++	})
++}
++
++func (s *ResourcesSuite) TestResourcesCreateOrUpdateCreateOnly() {
++	s.InitMcpClient()
++	client := kubernetes.NewForConfigOrDie(test.EnvTestRestConfig())
++	_, err := client.CoreV1().ConfigMaps("default").Create(s.T().Context(), &corev1.ConfigMap{
++		ObjectMeta: metav1.ObjectMeta{Name: "feature-flags-taken"},
++		Data:       map[string]string{"checkout": "off"},
++	}, metav1.CreateOptions{FieldManager: "team-b"})
++	s.Require().NoError(err)
++	s.Run("mode: create refuses an existing object and leaves it untouched", func() {
++		toolResult, err := s.CallTool("resources_create_or_update", map[string]interface{}{
++			"resource": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: feature-flags-taken\n  namespace: default\ndata:\n  checkout: \"on\"\n",
++			"mode":     "create",
++		})
++		s.Require().NoError(err)
++		s.True(toolResult.IsError)
++		s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "ConfigMap default/feature-flags-taken already exists (its fields are managed by team-b)")
++		cm, getErr := client.CoreV1().ConfigMaps("default").Get(s.T().Context(), "feature-flags-taken", metav1.GetOptions{})
++		s.Require().NoError(getErr)
++		s.Equal("off", cm.Data["checkout"])
++	})
++	s.Run("mode: create creates a new object", func() {
++		toolResult, err := s.CallTool("resources_create_or_update", map[string]interface{}{
++			"resource": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: feature-flags-free\n  namespace: default\n",
++			"mode":     "create",
++		})
++		s.Require().NoError(err)
++		s.Falsef(toolResult.IsError, "call tool failed: %v", toolResult.Content)
++	})
++}
++
+ func TestResources(t *testing.T) {
+ 	suite.Run(t, new(ResourcesSuite))
+ }
+diff --git a/pkg/mcp/testdata/toolsets-core-tools.json b/pkg/mcp/testdata/toolsets-core-tools.json
+index e5dc0f0..46e463f 100644
+--- a/pkg/mcp/testdata/toolsets-core-tools.json
++++ b/pkg/mcp/testdata/toolsets-core-tools.json
+@@ -1007,6 +1007,18 @@
+     "description": "Create or update a Kubernetes resource via Server-Side Apply. The manifest is the complete desired state: any field this tool previously set and the new manifest omits is removed. To edit an existing resource, fetch it with resources_get, modify it, then re-apply the full resource.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
+     "inputSchema": {
+       "properties": {
++        "force": {
++          "description": "Take over fields that other field managers own (server-side apply force). Default false: if the manifest sets a field another writer owns, nothing is written and the error names the fields and their managers, so a concurrent change is not silently reverted.",
++          "type": "boolean"
++        },
++        "mode": {
++          "description": "'apply' (default) creates the object or updates the fields it sets. 'create' only creates: an existing object of the same name is left untouched and the error names it and its field managers.",
++          "enum": [
++            "apply",
++            "create"
++          ],
++          "type": "string"
++        },
+         "output": {
+           "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
+           "enum": [
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+index 9acb449..ec02754 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+@@ -1120,6 +1120,18 @@
+           "description": "Optional parameter selecting which context to run the tool in. Defaults to fake-context if not set",
+           "type": "string"
+         },
++        "force": {
++          "description": "Take over fields that other field managers own (server-side apply force). Default false: if the manifest sets a field another writer owns, nothing is written and the error names the fields and their managers, so a concurrent change is not silently reverted.",
++          "type": "boolean"
++        },
++        "mode": {
++          "description": "'apply' (default) creates the object or updates the fields it sets. 'create' only creates: an existing object of the same name is left untouched and the error names it and its field managers.",
++          "enum": [
++            "apply",
++            "create"
++          ],
++          "type": "string"
++        },
+         "output": {
+           "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
+           "enum": [
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-openshift.json b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+index b1ba562..bb25891 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-openshift.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+@@ -1034,6 +1034,18 @@
+     "description": "Create or update a Kubernetes resource via Server-Side Apply. The manifest is the complete desired state: any field this tool previously set and the new manifest omits is removed. To edit an existing resource, fetch it with resources_get, modify it, then re-apply the full resource.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
+     "inputSchema": {
+       "properties": {
++        "force": {
++          "description": "Take over fields that other field managers own (server-side apply force). Default false: if the manifest sets a field another writer owns, nothing is written and the error names the fields and their managers, so a concurrent change is not silently reverted.",
++          "type": "boolean"
++        },
++        "mode": {
++          "description": "'apply' (default) creates the object or updates the fields it sets. 'create' only creates: an existing object of the same name is left untouched and the error names it and its field managers.",
++          "enum": [
++            "apply",
++            "create"
++          ],
++          "type": "string"
++        },
+         "output": {
+           "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
+           "enum": [
+diff --git a/pkg/mcp/testdata/toolsets-full-tools.json b/pkg/mcp/testdata/toolsets-full-tools.json
+index b1ba562..bb25891 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools.json
++++ b/pkg/mcp/testdata/toolsets-full-tools.json
+@@ -1034,6 +1034,18 @@
+     "description": "Create or update a Kubernetes resource via Server-Side Apply. The manifest is the complete desired state: any field this tool previously set and the new manifest omits is removed. To edit an existing resource, fetch it with resources_get, modify it, then re-apply the full resource.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
+     "inputSchema": {
+       "properties": {
++        "force": {
++          "description": "Take over fields that other field managers own (server-side apply force). Default false: if the manifest sets a field another writer owns, nothing is written and the error names the fields and their managers, so a concurrent change is not silently reverted.",
++          "type": "boolean"
++        },
++        "mode": {
++          "description": "'apply' (default) creates the object or updates the fields it sets. 'create' only creates: an existing object of the same name is left untouched and the error names it and its field managers.",
++          "enum": [
++            "apply",
++            "create"
++          ],
++          "type": "string"
++        },
+         "output": {
+           "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
+           "enum": [
+diff --git a/pkg/toolsets/core/resources.go b/pkg/toolsets/core/resources.go
+index f35c912..44ba927 100644
+--- a/pkg/toolsets/core/resources.go
++++ b/pkg/toolsets/core/resources.go
+@@ -133,6 +133,15 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
+ 						Description: "Complete YAML or JSON representation of the Kubernetes resource (full desired state, not a partial patch). Include apiVersion, kind, metadata, and the full spec. For namespaced resources, include metadata.namespace to specify the target namespace; if omitted, the configured default namespace is used",
+ 					},
+ 					"output": outputProperty,
++					"force": {
++						Type:        "boolean",
++						Description: "Take over fields that other field managers own (server-side apply force). Default false: if the manifest sets a field another writer owns, nothing is written and the error names the fields and their managers, so a concurrent change is not silently reverted.",
++					},
++					"mode": {
++						Type:        "string",
++						Enum:        []any{"apply", "create"},
++						Description: "'apply' (default) creates the object or updates the fields it sets. 'create' only creates: an existing object of the same name is left untouched and the error names it and its field managers.",
++					},
+ 				},
+ 				Required: []string{"resource"},
+ 			},
+@@ -431,7 +440,20 @@ func resourcesCreateOrUpdate(params api.ToolHandlerParams) (*api.ToolCallResult,
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to create or update resources: %w", err)), nil
+ 	}
+ 
+-	resources, err := kubernetes.NewCore(params).ResourcesCreateOrUpdate(params, r)
++	p := api.WrapParams(params)
++	opts := kubernetes.ApplyOptions{Force: p.OptionalBool("force", false)}
++	switch mode := p.OptionalString("mode", "apply"); mode {
++	case "apply":
++	case "create":
++		opts.CreateOnly = true
++	default:
++		return api.NewToolCallResult("", fmt.Errorf("failed to create or update resources: mode must be \"apply\" or \"create\", got %q", mode)), nil
++	}
++	if err := p.Err(); err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to create or update resources: %w", err)), nil
++	}
++
++	resources, err := kubernetes.NewCore(params).ResourcesApply(params, r, opts)
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to create or update resources: %w", err)), nil
+ 	}

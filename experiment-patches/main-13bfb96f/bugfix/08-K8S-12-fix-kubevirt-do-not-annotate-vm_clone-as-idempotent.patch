@@ -1,0 +1,75 @@
+From 68a6400957b6faf92909cf5d474662e2d68b028a Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 11:33:46 -0700
+Subject: [PATCH 08/14] fix(kubevirt): do not annotate vm_clone as idempotent
+
+vm_clone creates a VirtualMachineClone with metadata.generateName, so
+each call creates another clone request: two identical calls gave two
+VirtualMachineClone objects. The tool was annotated idempotentHint
+true, which tells clients a retry is safe. The annotation block matches
+vm_create's and appears to have been copied.
+
+The hint is now false. The snapshot of the kubevirt tool catalog changes
+accordingly.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+(cherry picked from commit e4d0adc5fd09642e50afbdc068d2d2842c6c1f6f)
+---
+ pkg/mcp/kubevirt_test.go                      | 13 +++++++++++++
+ pkg/mcp/testdata/toolsets-kubevirt-tools.json |  2 +-
+ pkg/toolsets/kubevirt/vm/clone/tool.go        |  5 +++--
+ 3 files changed, 17 insertions(+), 3 deletions(-)
+
+diff --git a/pkg/mcp/kubevirt_test.go b/pkg/mcp/kubevirt_test.go
+index 0225753..ea744b4 100644
+--- a/pkg/mcp/kubevirt_test.go
++++ b/pkg/mcp/kubevirt_test.go
+@@ -797,6 +797,19 @@ func (s *KubevirtSuite) TestVMClone() {
+ 
+ }
+ 
++func (s *KubevirtSuite) TestVMCloneIsNotIdempotent() {
++	tools, err := s.ListTools()
++	s.Require().NoError(err)
++	for _, tool := range tools.Tools {
++		if tool.Name == "vm_clone" {
++			s.Require().NotNil(tool.Annotations)
++			s.False(tool.Annotations.IdempotentHint, "every vm_clone call creates a new VirtualMachineClone")
++			return
++		}
++	}
++	s.Fail("vm_clone not listed")
++}
++
+ func (s *KubevirtSuite) TestVMTroubleshootPrompt() {
+ 	s.Run("vm-troubleshoot prompt returns troubleshooting guide", func() {
+ 		result, err := s.GetPrompt("vm-troubleshoot", map[string]string{
+diff --git a/pkg/mcp/testdata/toolsets-kubevirt-tools.json b/pkg/mcp/testdata/toolsets-kubevirt-tools.json
+index 0cbe943..8252a55 100644
+--- a/pkg/mcp/testdata/toolsets-kubevirt-tools.json
++++ b/pkg/mcp/testdata/toolsets-kubevirt-tools.json
+@@ -25,7 +25,7 @@
+     },
+     "annotations": {
+       "destructiveHint": true,
+-      "idempotentHint": true,
++      "idempotentHint": false,
+       "openWorldHint": false,
+       "readOnlyHint": false,
+       "title": "Virtual Machine: Clone"
+diff --git a/pkg/toolsets/kubevirt/vm/clone/tool.go b/pkg/toolsets/kubevirt/vm/clone/tool.go
+index ae14a39..5ae8baf 100644
+--- a/pkg/toolsets/kubevirt/vm/clone/tool.go
++++ b/pkg/toolsets/kubevirt/vm/clone/tool.go
+@@ -40,8 +40,9 @@ func Tools(inspector api.ClusterInspector) []api.ServerTool {
+ 					Title:           "Virtual Machine: Clone",
+ 					ReadOnlyHint:    ptr.To(false),
+ 					DestructiveHint: ptr.To(true),
+-					IdempotentHint:  ptr.To(true),
+-					OpenWorldHint:   ptr.To(false),
++					// Each call creates a new VirtualMachineClone (generateName), so a repeated call is not a no-op.
++					IdempotentHint: ptr.To(false),
++					OpenWorldHint:  ptr.To(false),
+ 				},
+ 			},
+ 			RBAC: api.RBACBounded(api.RBACRequirement{

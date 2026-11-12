@@ -1,0 +1,624 @@
+From edcb7153a64ea4ec09f89d9711f69d27fec2427a Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 12:28:19 -0700
+Subject: [PATCH 09/19] feat(core): add auth_can_i (C13)
+
+There was no way to ask whether an action is permitted. On the native
+session (job 9) the agent tried to create a SubjectAccessReview through
+resources_create_or_update ("cannot patch subjectaccessreviews": the
+apply tool can only patch) and spent 4,323 tokens and an error to learn
+what `kubectl auth can-i` answers in one line.
+
+auth_can_i(verb, apiVersion+kind | resource+group, subresource,
+namespace, name, user, groups) creates a SelfSubjectAccessReview for
+the server's own identity, or with `user` a SubjectAccessReview for
+another subject (which needs permission to create those; a refusal is
+returned as an error). The answer is one line ("yes: this server's
+identity may create networkpolicies.networking.k8s.io in namespace
+shop", or "no: ... may not ..." with the authorizer's reason), plus the
+same as structured content. A kind is resolved to its resource through
+discovery; for a cluster-scoped kind the namespace is dropped.
+
+Annotated read-only (an access review is answered, not stored),
+idempotent, open world.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ pkg/kubernetes/auth_review.go                 |  66 ++++++++++
+ pkg/mcp/auth_can_i_test.go                    |  42 +++++++
+ pkg/mcp/testdata/toolsets-core-tools.json     |  71 +++++++++++
+ .../toolsets-full-tools-multicluster.json     |  75 ++++++++++++
+ .../toolsets-full-tools-openshift.json        |  71 +++++++++++
+ pkg/mcp/testdata/toolsets-full-tools.json     |  71 +++++++++++
+ pkg/toolsets/core/auth.go                     | 115 ++++++++++++++++++
+ pkg/toolsets/core/toolset.go                  |   1 +
+ 8 files changed, 512 insertions(+)
+ create mode 100644 pkg/kubernetes/auth_review.go
+ create mode 100644 pkg/mcp/auth_can_i_test.go
+ create mode 100644 pkg/toolsets/core/auth.go
+
+diff --git a/pkg/kubernetes/auth_review.go b/pkg/kubernetes/auth_review.go
+new file mode 100644
+index 0000000..9d0ca71
+--- /dev/null
++++ b/pkg/kubernetes/auth_review.go
+@@ -0,0 +1,66 @@
++package kubernetes
++
++import (
++	"context"
++	"fmt"
++
++	authv1 "k8s.io/api/authorization/v1"
++	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
++	"k8s.io/apimachinery/pkg/runtime/schema"
++)
++
++// AccessReview is the question and answer of ResourcesAccessReview.
++type AccessReview struct {
++	Verb        string `json:"verb"`
++	Group       string `json:"group,omitempty"`
++	Resource    string `json:"resource"`
++	Subresource string `json:"subresource,omitempty"`
++	Namespace   string `json:"namespace,omitempty"`
++	Name        string `json:"name,omitempty"`
++	User        string `json:"user,omitempty"`
++	Allowed     bool   `json:"allowed"`
++	Denied      bool   `json:"denied,omitempty"`
++	Reason      string `json:"reason,omitempty"`
++}
++
++// ResourcesAccessReview asks the API server whether the server's identity (or, when
++// user is set, that user with groups) may perform verb on a resource, like
++// kubectl auth can-i. The resource is given as a GroupVersionKind (resolved through
++// discovery) or directly as group and plural resource.
++func (c *Core) ResourcesAccessReview(ctx context.Context, gvk *schema.GroupVersionKind, group, resource, subresource, verb, namespace, name, user string, groups []string) (*AccessReview, error) {
++	if gvk != nil {
++		gvr, err := c.resourceFor(gvk)
++		if err != nil {
++			return nil, err
++		}
++		group, resource = gvr.Group, gvr.Resource
++		if namespaced, err := c.isNamespaced(gvk); err == nil && !namespaced {
++			namespace = ""
++		}
++	}
++	if resource == "" || verb == "" {
++		return nil, fmt.Errorf("verb and a resource (apiVersion and kind, or resource) are required")
++	}
++	attributes := &authv1.ResourceAttributes{
++		Namespace: namespace, Verb: verb, Group: group, Resource: resource, Subresource: subresource, Name: name,
++	}
++	review := &AccessReview{Verb: verb, Group: group, Resource: resource, Subresource: subresource, Namespace: namespace, Name: name, User: user}
++	if user == "" {
++		response, err := c.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, &authv1.SelfSubjectAccessReview{
++			Spec: authv1.SelfSubjectAccessReviewSpec{ResourceAttributes: attributes},
++		}, metav1.CreateOptions{})
++		if err != nil {
++			return nil, err
++		}
++		review.Allowed, review.Denied, review.Reason = response.Status.Allowed, response.Status.Denied, response.Status.Reason
++		return review, nil
++	}
++	response, err := c.AuthorizationV1().SubjectAccessReviews().Create(ctx, &authv1.SubjectAccessReview{
++		Spec: authv1.SubjectAccessReviewSpec{ResourceAttributes: attributes, User: user, Groups: groups},
++	}, metav1.CreateOptions{})
++	if err != nil {
++		return nil, err
++	}
++	review.Allowed, review.Denied, review.Reason = response.Status.Allowed, response.Status.Denied, response.Status.Reason
++	return review, nil
++}
+diff --git a/pkg/mcp/auth_can_i_test.go b/pkg/mcp/auth_can_i_test.go
+new file mode 100644
+index 0000000..1e29b89
+--- /dev/null
++++ b/pkg/mcp/auth_can_i_test.go
+@@ -0,0 +1,42 @@
++package mcp
++
++import (
++	"testing"
++
++	"github.com/modelcontextprotocol/go-sdk/mcp"
++	"github.com/stretchr/testify/suite"
++)
++
++type AuthCanISuite struct {
++	BaseMcpSuite
++}
++
++func (s *AuthCanISuite) TestAuthCanI() {
++	s.InitMcpClient()
++	s.Run("allowed action by kind", func() {
++		result, err := s.CallTool("auth_can_i", map[string]interface{}{
++			"verb": "create", "apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "namespace": "default",
++		})
++		s.Require().NoError(err)
++		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++		s.Contains(result.Content[0].(*mcp.TextContent).Text, "yes: this server's identity may create networkpolicies.networking.k8s.io in namespace default")
++		s.Equal(true, result.StructuredContent.(map[string]any)["allowed"])
++	})
++	s.Run("another user by resource name", func() {
++		result, err := s.CallTool("auth_can_i", map[string]interface{}{
++			"verb": "delete", "resource": "pods", "namespace": "default", "user": "nobody-in-particular",
++		})
++		s.Require().NoError(err)
++		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++		s.Contains(result.Content[0].(*mcp.TextContent).Text, "no: user nobody-in-particular may not delete pods in namespace default")
++	})
++	s.Run("a target is required", func() {
++		result, err := s.CallTool("auth_can_i", map[string]interface{}{"verb": "get"})
++		s.Require().NoError(err)
++		s.True(result.IsError)
++	})
++}
++
++func TestAuthCanI(t *testing.T) {
++	suite.Run(t, new(AuthCanISuite))
++}
+diff --git a/pkg/mcp/testdata/toolsets-core-tools.json b/pkg/mcp/testdata/toolsets-core-tools.json
+index 9258232..cf7dd93 100644
+--- a/pkg/mcp/testdata/toolsets-core-tools.json
++++ b/pkg/mcp/testdata/toolsets-core-tools.json
+@@ -32,6 +32,77 @@
+     "name": "api_resources_list",
+     "title": "API Resources: List by Kind"
+   },
++  {
++    "_meta": {
++      "io.kubernetes-mcp-server/rbac": {
++        "unbounded": {
++          "reason": "creates SelfSubjectAccessReviews (allowed for every authenticated user) and, with user, SubjectAccessReviews"
++        },
++        "version": "v1alpha1"
++      }
++    },
++    "annotations": {
++      "destructiveHint": false,
++      "idempotentHint": true,
++      "openWorldHint": true,
++      "readOnlyHint": true,
++      "title": "Auth: Can I"
++    },
++    "description": "Check whether this server's Kubernetes identity may perform an action, like 'kubectl auth can-i': e.g. verb 'create' on apiVersion 'networking.k8s.io/v1' kind 'NetworkPolicy' in a namespace. Use it before a write that may be refused, or to explain a 403. With user (and groups) it asks about another subject, which needs permission to create SubjectAccessReviews.",
++    "inputSchema": {
++      "properties": {
++        "apiVersion": {
++          "description": "apiVersion of the kind (e.g. v1, apps/v1)",
++          "type": "string"
++        },
++        "group": {
++          "description": "API group of resource (empty for the core group)",
++          "type": "string"
++        },
++        "groups": {
++          "description": "Groups of user",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
++        "kind": {
++          "description": "kind (e.g. Pod, Deployment, NetworkPolicy)",
++          "type": "string"
++        },
++        "name": {
++          "description": "Optional name of one object",
++          "type": "string"
++        },
++        "namespace": {
++          "description": "Namespace to ask about; empty asks about all namespaces (or a cluster-scoped kind)",
++          "type": "string"
++        },
++        "resource": {
++          "description": "Instead of apiVersion and kind: the plural resource name (e.g. pods), with group for non-core resources",
++          "type": "string"
++        },
++        "subresource": {
++          "description": "Optional subresource (e.g. log, exec, scale)",
++          "type": "string"
++        },
++        "user": {
++          "description": "Optional other user to ask about (SubjectAccessReview)",
++          "type": "string"
++        },
++        "verb": {
++          "description": "get, list, watch, create, update, patch, delete, deletecollection, or another verb",
++          "type": "string"
++        }
++      },
++      "required": [
++        "verb"
++      ],
++      "type": "object"
++    },
++    "name": "auth_can_i",
++    "title": "Auth: Can I"
++  },
+   {
+     "_meta": {
+       "io.kubernetes-mcp-server/rbac": {
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+index 75ddf5a..740ff24 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+@@ -36,6 +36,81 @@
+     "name": "api_resources_list",
+     "title": "API Resources: List by Kind"
+   },
++  {
++    "_meta": {
++      "io.kubernetes-mcp-server/rbac": {
++        "unbounded": {
++          "reason": "creates SelfSubjectAccessReviews (allowed for every authenticated user) and, with user, SubjectAccessReviews"
++        },
++        "version": "v1alpha1"
++      }
++    },
++    "annotations": {
++      "destructiveHint": false,
++      "idempotentHint": true,
++      "openWorldHint": true,
++      "readOnlyHint": true,
++      "title": "Auth: Can I"
++    },
++    "description": "Check whether this server's Kubernetes identity may perform an action, like 'kubectl auth can-i': e.g. verb 'create' on apiVersion 'networking.k8s.io/v1' kind 'NetworkPolicy' in a namespace. Use it before a write that may be refused, or to explain a 403. With user (and groups) it asks about another subject, which needs permission to create SubjectAccessReviews.",
++    "inputSchema": {
++      "properties": {
++        "apiVersion": {
++          "description": "apiVersion of the kind (e.g. v1, apps/v1)",
++          "type": "string"
++        },
++        "context": {
++          "description": "Optional parameter selecting which context to run the tool in. Defaults to fake-context if not set",
++          "type": "string"
++        },
++        "group": {
++          "description": "API group of resource (empty for the core group)",
++          "type": "string"
++        },
++        "groups": {
++          "description": "Groups of user",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
++        "kind": {
++          "description": "kind (e.g. Pod, Deployment, NetworkPolicy)",
++          "type": "string"
++        },
++        "name": {
++          "description": "Optional name of one object",
++          "type": "string"
++        },
++        "namespace": {
++          "description": "Namespace to ask about; empty asks about all namespaces (or a cluster-scoped kind)",
++          "type": "string"
++        },
++        "resource": {
++          "description": "Instead of apiVersion and kind: the plural resource name (e.g. pods), with group for non-core resources",
++          "type": "string"
++        },
++        "subresource": {
++          "description": "Optional subresource (e.g. log, exec, scale)",
++          "type": "string"
++        },
++        "user": {
++          "description": "Optional other user to ask about (SubjectAccessReview)",
++          "type": "string"
++        },
++        "verb": {
++          "description": "get, list, watch, create, update, patch, delete, deletecollection, or another verb",
++          "type": "string"
++        }
++      },
++      "required": [
++        "verb"
++      ],
++      "type": "object"
++    },
++    "name": "auth_can_i",
++    "title": "Auth: Can I"
++  },
+   {
+     "_meta": {
+       "io.kubernetes-mcp-server/rbac": {
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-openshift.json b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+index 9e8dada..21f82c0 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-openshift.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+@@ -32,6 +32,77 @@
+     "name": "api_resources_list",
+     "title": "API Resources: List by Kind"
+   },
++  {
++    "_meta": {
++      "io.kubernetes-mcp-server/rbac": {
++        "unbounded": {
++          "reason": "creates SelfSubjectAccessReviews (allowed for every authenticated user) and, with user, SubjectAccessReviews"
++        },
++        "version": "v1alpha1"
++      }
++    },
++    "annotations": {
++      "destructiveHint": false,
++      "idempotentHint": true,
++      "openWorldHint": true,
++      "readOnlyHint": true,
++      "title": "Auth: Can I"
++    },
++    "description": "Check whether this server's Kubernetes identity may perform an action, like 'kubectl auth can-i': e.g. verb 'create' on apiVersion 'networking.k8s.io/v1' kind 'NetworkPolicy' in a namespace. Use it before a write that may be refused, or to explain a 403. With user (and groups) it asks about another subject, which needs permission to create SubjectAccessReviews.",
++    "inputSchema": {
++      "properties": {
++        "apiVersion": {
++          "description": "apiVersion of the kind (e.g. v1, apps/v1)",
++          "type": "string"
++        },
++        "group": {
++          "description": "API group of resource (empty for the core group)",
++          "type": "string"
++        },
++        "groups": {
++          "description": "Groups of user",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
++        "kind": {
++          "description": "kind (e.g. Pod, Deployment, NetworkPolicy)",
++          "type": "string"
++        },
++        "name": {
++          "description": "Optional name of one object",
++          "type": "string"
++        },
++        "namespace": {
++          "description": "Namespace to ask about; empty asks about all namespaces (or a cluster-scoped kind)",
++          "type": "string"
++        },
++        "resource": {
++          "description": "Instead of apiVersion and kind: the plural resource name (e.g. pods), with group for non-core resources",
++          "type": "string"
++        },
++        "subresource": {
++          "description": "Optional subresource (e.g. log, exec, scale)",
++          "type": "string"
++        },
++        "user": {
++          "description": "Optional other user to ask about (SubjectAccessReview)",
++          "type": "string"
++        },
++        "verb": {
++          "description": "get, list, watch, create, update, patch, delete, deletecollection, or another verb",
++          "type": "string"
++        }
++      },
++      "required": [
++        "verb"
++      ],
++      "type": "object"
++    },
++    "name": "auth_can_i",
++    "title": "Auth: Can I"
++  },
+   {
+     "_meta": {
+       "io.kubernetes-mcp-server/rbac": {
+diff --git a/pkg/mcp/testdata/toolsets-full-tools.json b/pkg/mcp/testdata/toolsets-full-tools.json
+index 9e8dada..21f82c0 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools.json
++++ b/pkg/mcp/testdata/toolsets-full-tools.json
+@@ -32,6 +32,77 @@
+     "name": "api_resources_list",
+     "title": "API Resources: List by Kind"
+   },
++  {
++    "_meta": {
++      "io.kubernetes-mcp-server/rbac": {
++        "unbounded": {
++          "reason": "creates SelfSubjectAccessReviews (allowed for every authenticated user) and, with user, SubjectAccessReviews"
++        },
++        "version": "v1alpha1"
++      }
++    },
++    "annotations": {
++      "destructiveHint": false,
++      "idempotentHint": true,
++      "openWorldHint": true,
++      "readOnlyHint": true,
++      "title": "Auth: Can I"
++    },
++    "description": "Check whether this server's Kubernetes identity may perform an action, like 'kubectl auth can-i': e.g. verb 'create' on apiVersion 'networking.k8s.io/v1' kind 'NetworkPolicy' in a namespace. Use it before a write that may be refused, or to explain a 403. With user (and groups) it asks about another subject, which needs permission to create SubjectAccessReviews.",
++    "inputSchema": {
++      "properties": {
++        "apiVersion": {
++          "description": "apiVersion of the kind (e.g. v1, apps/v1)",
++          "type": "string"
++        },
++        "group": {
++          "description": "API group of resource (empty for the core group)",
++          "type": "string"
++        },
++        "groups": {
++          "description": "Groups of user",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
++        "kind": {
++          "description": "kind (e.g. Pod, Deployment, NetworkPolicy)",
++          "type": "string"
++        },
++        "name": {
++          "description": "Optional name of one object",
++          "type": "string"
++        },
++        "namespace": {
++          "description": "Namespace to ask about; empty asks about all namespaces (or a cluster-scoped kind)",
++          "type": "string"
++        },
++        "resource": {
++          "description": "Instead of apiVersion and kind: the plural resource name (e.g. pods), with group for non-core resources",
++          "type": "string"
++        },
++        "subresource": {
++          "description": "Optional subresource (e.g. log, exec, scale)",
++          "type": "string"
++        },
++        "user": {
++          "description": "Optional other user to ask about (SubjectAccessReview)",
++          "type": "string"
++        },
++        "verb": {
++          "description": "get, list, watch, create, update, patch, delete, deletecollection, or another verb",
++          "type": "string"
++        }
++      },
++      "required": [
++        "verb"
++      ],
++      "type": "object"
++    },
++    "name": "auth_can_i",
++    "title": "Auth: Can I"
++  },
+   {
+     "_meta": {
+       "io.kubernetes-mcp-server/rbac": {
+diff --git a/pkg/toolsets/core/auth.go b/pkg/toolsets/core/auth.go
+new file mode 100644
+index 0000000..be1a25d
+--- /dev/null
++++ b/pkg/toolsets/core/auth.go
+@@ -0,0 +1,115 @@
++package core
++
++import (
++	"fmt"
++
++	"github.com/google/jsonschema-go/jsonschema"
++	"k8s.io/apimachinery/pkg/runtime/schema"
++	"k8s.io/utils/ptr"
++
++	"github.com/containers/kubernetes-mcp-server/pkg/api"
++	"github.com/containers/kubernetes-mcp-server/pkg/kubernetes"
++)
++
++func initAuth() []api.ServerTool {
++	return []api.ServerTool{{
++		Tool: api.Tool{
++			Name: "auth_can_i",
++			Description: "Check whether this server's Kubernetes identity may perform an action, like 'kubectl auth can-i': " +
++				"e.g. verb 'create' on apiVersion 'networking.k8s.io/v1' kind 'NetworkPolicy' in a namespace. Use it before a write that may be refused, " +
++				"or to explain a 403. With user (and groups) it asks about another subject, which needs permission to create SubjectAccessReviews.",
++			InputSchema: &jsonschema.Schema{
++				Type: "object",
++				Properties: map[string]*jsonschema.Schema{
++					"verb":        {Type: "string", Description: "get, list, watch, create, update, patch, delete, deletecollection, or another verb"},
++					"apiVersion":  {Type: "string", Description: "apiVersion of the kind (e.g. v1, apps/v1)"},
++					"kind":        {Type: "string", Description: "kind (e.g. Pod, Deployment, NetworkPolicy)"},
++					"resource":    {Type: "string", Description: "Instead of apiVersion and kind: the plural resource name (e.g. pods), with group for non-core resources"},
++					"group":       {Type: "string", Description: "API group of resource (empty for the core group)"},
++					"subresource": {Type: "string", Description: "Optional subresource (e.g. log, exec, scale)"},
++					"namespace":   {Type: "string", Description: "Namespace to ask about; empty asks about all namespaces (or a cluster-scoped kind)"},
++					"name":        {Type: "string", Description: "Optional name of one object"},
++					"user":        {Type: "string", Description: "Optional other user to ask about (SubjectAccessReview)"},
++					"groups":      {Type: "array", Items: &jsonschema.Schema{Type: "string"}, Description: "Groups of user"},
++				},
++				Required: []string{"verb"},
++			},
++			Annotations: api.ToolAnnotations{
++				Title: "Auth: Can I",
++				// an access review is answered and not stored
++				ReadOnlyHint:    ptr.To(true),
++				DestructiveHint: ptr.To(false),
++				IdempotentHint:  ptr.To(true),
++				OpenWorldHint:   ptr.To(true),
++			},
++		},
++		RBAC:    api.RBACUnbounded("creates SelfSubjectAccessReviews (allowed for every authenticated user) and, with user, SubjectAccessReviews"),
++		Handler: authCanI,
++	}}
++}
++
++func authCanI(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
++	p := api.WrapParams(params)
++	verb := p.RequiredString("verb")
++	apiVersion := p.OptionalString("apiVersion", "")
++	kind := p.OptionalString("kind", "")
++	resource := p.OptionalString("resource", "")
++	group := p.OptionalString("group", "")
++	subresource := p.OptionalString("subresource", "")
++	namespace := p.OptionalString("namespace", "")
++	name := p.OptionalString("name", "")
++	user := p.OptionalString("user", "")
++	if err := p.Err(); err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to check access: %w", err)), nil
++	}
++	groups, err := stringList(params.GetArguments(), "groups")
++	if err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to check access: %w", err)), nil
++	}
++	var gvk *schema.GroupVersionKind
++	switch {
++	case kind != "" && apiVersion != "":
++		gv, err := schema.ParseGroupVersion(apiVersion)
++		if err != nil {
++			return api.NewToolCallResult("", fmt.Errorf("failed to check access: invalid apiVersion %q", apiVersion)), nil
++		}
++		k := gv.WithKind(kind)
++		gvk = &k
++	case resource == "":
++		return api.NewToolCallResult("", fmt.Errorf("failed to check access: give apiVersion and kind, or resource")), nil
++	}
++	review, err := kubernetes.NewCore(params).ResourcesAccessReview(params, gvk, group, resource, subresource, verb, namespace, name, user, groups)
++	if err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to check access: %w", err)), nil
++	}
++	answer := "no"
++	if review.Allowed {
++		answer = "yes"
++	}
++	who := "this server's identity"
++	if user != "" {
++		who = "user " + user
++	}
++	target := review.Resource
++	if review.Group != "" {
++		target += "." + review.Group
++	}
++	if review.Subresource != "" {
++		target += "/" + review.Subresource
++	}
++	if review.Name != "" {
++		target += " " + review.Name
++	}
++	where := "in all namespaces"
++	if review.Namespace != "" {
++		where = "in namespace " + review.Namespace
++	}
++	text := fmt.Sprintf("%s: %s may %s %s %s", answer, who, verb, target, where)
++	if !review.Allowed {
++		text = fmt.Sprintf("no: %s may not %s %s %s", who, verb, target, where)
++	}
++	if review.Reason != "" {
++		text += " (" + review.Reason + ")"
++	}
++	return api.NewToolCallResultFull(text, review, nil), nil
++}
+diff --git a/pkg/toolsets/core/toolset.go b/pkg/toolsets/core/toolset.go
+index 0d5f878..4091d11 100644
+--- a/pkg/toolsets/core/toolset.go
++++ b/pkg/toolsets/core/toolset.go
+@@ -28,6 +28,7 @@ func (t *Toolset) GetDescription() string {
+ 
+ func (t *Toolset) GetTools(ctx context.Context, toolsetContext api.ToolsetContext) []api.ServerTool {
+ 	return slices.Concat(
++		initAuth(),
+ 		initEvents(),
+ 		initNamespaces(toolsetContext.Inspector),
+ 		initNodes(toolsetContext.Inspector),

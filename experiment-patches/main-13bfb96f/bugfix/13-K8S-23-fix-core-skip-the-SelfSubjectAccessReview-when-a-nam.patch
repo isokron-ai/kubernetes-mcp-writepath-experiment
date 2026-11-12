@@ -1,0 +1,131 @@
+From ae052e8d5f2262d7eaa0f1f5f1f540d53c87280c Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 11:46:39 -0700
+Subject: [PATCH 13/14] fix(core): skip the SelfSubjectAccessReview when a
+ namespace is given
+
+ResourcesList checks whether the caller may list a namespaced kind in
+all namespaces, and falls back to the configured namespace if not. The
+comment says the check is for the all-namespaces case, but the
+condition evaluated the access review before testing whether a namespace
+was given, so every namespaced list (resources_list,
+pods_list_in_namespace, events_list) made a SelfSubjectAccessReview
+whose answer was then ignored. On the usability pass that was 58 extra
+API requests.
+
+The namespace test now comes first; the review is made only for an
+all-namespaces list. Behaviour is otherwise unchanged.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ pkg/kubernetes/resources.go                   |  3 +-
+ .../resources_list_access_review_test.go      | 86 +++++++++++++++++++
+ 2 files changed, 88 insertions(+), 1 deletion(-)
+ create mode 100644 pkg/kubernetes/resources_list_access_review_test.go
+
+diff --git a/pkg/kubernetes/resources.go b/pkg/kubernetes/resources.go
+index b005fff..f96b5da 100644
+--- a/pkg/kubernetes/resources.go
++++ b/pkg/kubernetes/resources.go
+@@ -40,7 +40,8 @@ func (c *Core) ResourcesList(ctx context.Context, gvk *schema.GroupVersionKind,
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	if isNamespaced && !c.canIUse(ctx, gvr, namespace, "list") && namespace == "" {
++	// The access review only matters for an all-namespaces list; skip it when a namespace is given.
++	if isNamespaced && namespace == "" && !c.canIUse(ctx, gvr, namespace, "list") {
+ 		namespace = c.NamespaceOrDefault("")
+ 	} else if !isNamespaced {
+ 		// Cluster-scoped resources never have a namespace, even when the caller provides one.
+diff --git a/pkg/kubernetes/resources_list_access_review_test.go b/pkg/kubernetes/resources_list_access_review_test.go
+new file mode 100644
+index 0000000..054b648
+--- /dev/null
++++ b/pkg/kubernetes/resources_list_access_review_test.go
+@@ -0,0 +1,86 @@
++package kubernetes
++
++import (
++	"context"
++	"net/http"
++	"strings"
++	"sync"
++	"testing"
++
++	"github.com/stretchr/testify/suite"
++	authorizationv1 "k8s.io/api/authorization/v1"
++	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
++	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
++	"k8s.io/apimachinery/pkg/runtime/schema"
++	"k8s.io/client-go/tools/clientcmd"
++
++	"github.com/containers/kubernetes-mcp-server/internal/test"
++	"github.com/containers/kubernetes-mcp-server/pkg/api"
++	"github.com/containers/kubernetes-mcp-server/pkg/config"
++)
++
++type ResourcesListAccessReviewSuite struct {
++	suite.Suite
++	mockServer *test.MockServer
++	core       *Core
++	mu         sync.Mutex
++	reviews    int
++	listPaths  []string
++}
++
++func (s *ResourcesListAccessReviewSuite) SetupTest() {
++	s.reviews, s.listPaths = 0, nil
++	s.mockServer = test.NewMockServer()
++	s.mockServer.Handle(test.NewDiscoveryClientHandler(metav1.APIResourceList{
++		GroupVersion: "authorization.k8s.io/v1",
++		APIResources: []metav1.APIResource{{Name: "selfsubjectaccessreviews", Kind: "SelfSubjectAccessReview", Verbs: metav1.Verbs{"create"}}},
++	}))
++	s.mockServer.Handle(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		switch {
++		case r.URL.Path == "/apis/authorization.k8s.io/v1/selfsubjectaccessreviews":
++			s.mu.Lock()
++			s.reviews++
++			s.mu.Unlock()
++			test.WriteObject(w, &authorizationv1.SelfSubjectAccessReview{
++				TypeMeta: metav1.TypeMeta{APIVersion: "authorization.k8s.io/v1", Kind: "SelfSubjectAccessReview"},
++				Status:   authorizationv1.SubjectAccessReviewStatus{Allowed: true},
++			})
++		case strings.HasSuffix(r.URL.Path, "/pods") && r.Method == http.MethodGet:
++			s.mu.Lock()
++			s.listPaths = append(s.listPaths, r.URL.Path)
++			s.mu.Unlock()
++			test.WriteObject(w, &unstructured.UnstructuredList{Object: map[string]interface{}{"apiVersion": "v1", "kind": "PodList"}})
++		}
++	}))
++	k, err := NewKubernetes(
++		s.T().Context(),
++		config.BaseDefault(),
++		clientcmd.NewDefaultClientConfig(*s.mockServer.Kubeconfig(), &clientcmd.ConfigOverrides{}),
++		s.mockServer.Config(),
++	)
++	s.Require().NoError(err)
++	s.T().Cleanup(k.close)
++	s.core = NewCore(k)
++}
++
++func (s *ResourcesListAccessReviewSuite) TearDownTest() {
++	s.mockServer.Close()
++}
++
++func (s *ResourcesListAccessReviewSuite) TestNamespacedListMakesNoAccessReview() {
++	_, err := s.core.ResourcesList(context.Background(), &schema.GroupVersionKind{Version: "v1", Kind: "Pod"}, "team-a", api.ListOptions{})
++	s.Require().NoError(err)
++	s.Equal(0, s.reviews, "a list in a given namespace needs no SelfSubjectAccessReview")
++	s.Equal([]string{"/api/v1/namespaces/team-a/pods"}, s.listPaths)
++}
++
++func (s *ResourcesListAccessReviewSuite) TestAllNamespacesListMakesOneAccessReview() {
++	_, err := s.core.ResourcesList(context.Background(), &schema.GroupVersionKind{Version: "v1", Kind: "Pod"}, "", api.ListOptions{})
++	s.Require().NoError(err)
++	s.Equal(1, s.reviews)
++	s.Equal([]string{"/api/v1/pods"}, s.listPaths)
++}
++
++func TestResourcesListAccessReview(t *testing.T) {
++	suite.Run(t, new(ResourcesListAccessReviewSuite))
++}

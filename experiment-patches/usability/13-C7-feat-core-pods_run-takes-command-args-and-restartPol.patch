@@ -1,0 +1,384 @@
+From cb6c9710556251208b8853ceed64046179226221 Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 12:39:23 -0700
+Subject: [PATCH 13/19] feat(core): pods_run takes command, args and
+ restartPolicy; create-only unless replace (C7)
+
+pods_run could only start an image's default entrypoint with restart
+policy Always, so the tool meant for "run this in the cluster" could
+not run a command: on the native session (job 7) the agent fell back to
+a hand-written Pod manifest after six calls and two errors. A re-run
+with the same name re-applied over the earlier Pod (the fixed build
+already refuses objects pods_run did not create).
+
+- `command` and `args` (arrays of strings) set the container's
+  entrypoint and arguments; `restartPolicy` (Always, OnFailure, Never)
+  allows one-off commands.
+- A Pod, Service or Route that an earlier pods_run created under the
+  same name is no longer re-applied silently: the call fails and says
+  so. `replace: true` re-applies over them as before (immutable Pod
+  fields such as the command still need a delete first; the error
+  says so).
+- The tool stays annotated destructive because of `replace`.
+
+Core.PodsRun keeps its signature and behaviour (replace) for other
+callers; the tool uses the new PodsRunWithOptions. The test of the
+re-run now expects the refusal, and the re-apply with replace.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ pkg/kubernetes/pods.go                        | 23 +++++++++-
+ pkg/mcp/pods_run_test.go                      | 33 +++++++++++---
+ pkg/mcp/testdata/toolsets-core-tools.json     | 27 ++++++++++++
+ .../toolsets-full-tools-multicluster.json     | 27 ++++++++++++
+ .../toolsets-full-tools-openshift.json        | 27 ++++++++++++
+ pkg/mcp/testdata/toolsets-full-tools.json     | 27 ++++++++++++
+ pkg/toolsets/core/pods.go                     | 44 ++++++++++++++++++-
+ 7 files changed, 201 insertions(+), 7 deletions(-)
+
+diff --git a/pkg/kubernetes/pods.go b/pkg/kubernetes/pods.go
+index 464439f..928ae43 100644
+--- a/pkg/kubernetes/pods.go
++++ b/pkg/kubernetes/pods.go
+@@ -217,6 +217,22 @@ func (c *Core) PodsLogLimited(ctx context.Context, namespace, name, container st
+ }
+ 
+ func (c *Core) PodsRun(ctx context.Context, namespace, name, image string, port int32) ([]*unstructured.Unstructured, error) {
++	return c.PodsRunWithOptions(ctx, namespace, name, image, port, PodsRunOptions{Replace: true})
++}
++
++// PodsRunOptions are pods_run's container and re-run options.
++type PodsRunOptions struct {
++	Command       []string
++	Args          []string
++	RestartPolicy v1.RestartPolicy
++	// Replace re-applies over a Pod, Service and Route that an earlier pods_run call
++	// created under the same name. Without it such a re-run fails instead.
++	Replace bool
++}
++
++// PodsRunWithOptions runs a Pod (and, with a port, a Service and Route) with a command,
++// arguments and restart policy.
++func (c *Core) PodsRunWithOptions(ctx context.Context, namespace, name, image string, port int32, opts PodsRunOptions) ([]*unstructured.Unstructured, error) {
+ 	if name == "" {
+ 		name = version.BinaryName + "-run-" + rand.String(5)
+ 	}
+@@ -231,10 +247,12 @@ func (c *Core) PodsRun(ctx context.Context, namespace, name, image string, port
+ 	pod := &v1.Pod{
+ 		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Pod"},
+ 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: c.NamespaceOrDefault(namespace), Labels: labels},
+-		Spec: v1.PodSpec{Containers: []v1.Container{{
++		Spec: v1.PodSpec{RestartPolicy: opts.RestartPolicy, Containers: []v1.Container{{
+ 			Name:            name,
+ 			Image:           image,
+ 			ImagePullPolicy: v1.PullAlways,
++			Command:         opts.Command,
++			Args:            opts.Args,
+ 		}}},
+ 	}
+ 	resources = append(resources, pod)
+@@ -313,6 +331,9 @@ func (c *Core) PodsRun(ctx context.Context, namespace, name, image string, port
+ 		if existing.GetLabels()[AppKubernetesManagedBy] != version.BinaryName || existing.GetLabels()[AppKubernetesName] != name {
+ 			return nil, fmt.Errorf("%s %s/%s already exists and was not created by pods_run; nothing was created or changed: choose another name", gvk.Kind, u.GetNamespace(), u.GetName())
+ 		}
++		if !opts.Replace {
++			return nil, fmt.Errorf("%s %s/%s already exists (created by an earlier pods_run); nothing was changed: choose another name, delete it first, or pass replace: true to re-apply over it (immutable Pod fields such as the command still need a delete)", gvk.Kind, u.GetNamespace(), u.GetName())
++		}
+ 	}
+ 	return c.resourcesCreateOrUpdate(ctx, toCreate)
+ }
+diff --git a/pkg/mcp/pods_run_test.go b/pkg/mcp/pods_run_test.go
+index 1b10c59..249947c 100644
+--- a/pkg/mcp/pods_run_test.go
++++ b/pkg/mcp/pods_run_test.go
+@@ -132,13 +132,36 @@ func (s *PodsRunSuite) TestPodsRunDoesNotTakeOverExistingService() {
+ 	})
+ }
+ 
+-func (s *PodsRunSuite) TestPodsRunRerunKeepsWorking() {
++func (s *PodsRunSuite) TestPodsRunRerun() {
+ 	s.InitMcpClient()
+-	for i := 0; i < 2; i++ {
+-		toolResult, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "name": "rerun-pod", "port": 80})
++	first, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "name": "rerun-pod", "port": 80})
++	s.Require().NoError(err)
++	s.Require().Falsef(first.IsError, "call tool failed: %v", first.Content)
++	s.Run("a re-run without replace changes nothing and says why", func() {
++		again, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx:2", "name": "rerun-pod", "port": 80})
+ 		s.Require().NoError(err)
+-		s.Falsef(toolResult.IsError, "call %d failed: %v", i+1, toolResult.Content)
+-	}
++		s.True(again.IsError)
++		s.Contains(again.Content[0].(*mcp.TextContent).Text, "Pod default/rerun-pod already exists (created by an earlier pods_run)")
++	})
++	s.Run("a re-run with replace re-applies", func() {
++		again, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "name": "rerun-pod", "port": 80, "replace": true})
++		s.Require().NoError(err)
++		s.Falsef(again.IsError, "call tool failed: %v", again.Content)
++	})
++}
++
++func (s *PodsRunSuite) TestPodsRunWithCommand() {
++	s.InitMcpClient()
++	result, err := s.CallTool("pods_run", map[string]interface{}{
++		"image": "busybox", "name": "one-off", "command": []interface{}{"sh", "-c"}, "args": []interface{}{"echo hi"}, "restartPolicy": "Never",
++	})
++	s.Require().NoError(err)
++	s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++	pod, err := kubernetes.NewForConfigOrDie(test.EnvTestRestConfig()).CoreV1().Pods("default").Get(s.T().Context(), "one-off", metav1.GetOptions{})
++	s.Require().NoError(err)
++	s.Equal([]string{"sh", "-c"}, pod.Spec.Containers[0].Command)
++	s.Equal([]string{"echo hi"}, pod.Spec.Containers[0].Args)
++	s.Equal(corev1.RestartPolicyNever, pod.Spec.RestartPolicy)
+ }
+ 
+ func (s *PodsRunSuite) TestPodsRunIsAnnotatedDestructive() {
+diff --git a/pkg/mcp/testdata/toolsets-core-tools.json b/pkg/mcp/testdata/toolsets-core-tools.json
+index 66972bf..6cf1046 100644
+--- a/pkg/mcp/testdata/toolsets-core-tools.json
++++ b/pkg/mcp/testdata/toolsets-core-tools.json
+@@ -908,6 +908,20 @@
+     "description": "Run a Kubernetes Pod in the current or provided namespace with the provided container image and optional name",
+     "inputSchema": {
+       "properties": {
++        "args": {
++          "description": "Optional arguments to the entrypoint",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
++        "command": {
++          "description": "Optional entrypoint, replacing the image's (e.g. [\"sh\", \"-c\", \"sleep 3600\"])",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
+         "image": {
+           "description": "Container Image to run in the Pod",
+           "type": "string"
+@@ -931,6 +945,19 @@
+         "port": {
+           "description": "TCP/IP port to expose from the Pod container, 1-65535 (Optional, no port exposed if not provided)",
+           "type": "number"
++        },
++        "replace": {
++          "description": "Re-apply over a Pod (and Service, Route) that an earlier pods_run created with this name. Default false: an existing object of that name is never changed.",
++          "type": "boolean"
++        },
++        "restartPolicy": {
++          "description": "Optional restart policy (default Always); use Never for a one-off command",
++          "enum": [
++            "Always",
++            "OnFailure",
++            "Never"
++          ],
++          "type": "string"
+         }
+       },
+       "required": [
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+index bb56a93..e5dcbd3 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+@@ -1009,6 +1009,20 @@
+     "description": "Run a Kubernetes Pod in the current or provided namespace with the provided container image and optional name",
+     "inputSchema": {
+       "properties": {
++        "args": {
++          "description": "Optional arguments to the entrypoint",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
++        "command": {
++          "description": "Optional entrypoint, replacing the image's (e.g. [\"sh\", \"-c\", \"sleep 3600\"])",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
+         "context": {
+           "description": "Optional parameter selecting which context to run the tool in. Defaults to fake-context if not set",
+           "type": "string"
+@@ -1036,6 +1050,19 @@
+         "port": {
+           "description": "TCP/IP port to expose from the Pod container, 1-65535 (Optional, no port exposed if not provided)",
+           "type": "number"
++        },
++        "replace": {
++          "description": "Re-apply over a Pod (and Service, Route) that an earlier pods_run created with this name. Default false: an existing object of that name is never changed.",
++          "type": "boolean"
++        },
++        "restartPolicy": {
++          "description": "Optional restart policy (default Always); use Never for a one-off command",
++          "enum": [
++            "Always",
++            "OnFailure",
++            "Never"
++          ],
++          "type": "string"
+         }
+       },
+       "required": [
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-openshift.json b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+index e48527d..5616011 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-openshift.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+@@ -935,6 +935,20 @@
+     "description": "Run a Kubernetes Pod in the current or provided namespace with the provided container image and optional name",
+     "inputSchema": {
+       "properties": {
++        "args": {
++          "description": "Optional arguments to the entrypoint",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
++        "command": {
++          "description": "Optional entrypoint, replacing the image's (e.g. [\"sh\", \"-c\", \"sleep 3600\"])",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
+         "image": {
+           "description": "Container Image to run in the Pod",
+           "type": "string"
+@@ -958,6 +972,19 @@
+         "port": {
+           "description": "TCP/IP port to expose from the Pod container, 1-65535 (Optional, no port exposed if not provided)",
+           "type": "number"
++        },
++        "replace": {
++          "description": "Re-apply over a Pod (and Service, Route) that an earlier pods_run created with this name. Default false: an existing object of that name is never changed.",
++          "type": "boolean"
++        },
++        "restartPolicy": {
++          "description": "Optional restart policy (default Always); use Never for a one-off command",
++          "enum": [
++            "Always",
++            "OnFailure",
++            "Never"
++          ],
++          "type": "string"
+         }
+       },
+       "required": [
+diff --git a/pkg/mcp/testdata/toolsets-full-tools.json b/pkg/mcp/testdata/toolsets-full-tools.json
+index e48527d..5616011 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools.json
++++ b/pkg/mcp/testdata/toolsets-full-tools.json
+@@ -935,6 +935,20 @@
+     "description": "Run a Kubernetes Pod in the current or provided namespace with the provided container image and optional name",
+     "inputSchema": {
+       "properties": {
++        "args": {
++          "description": "Optional arguments to the entrypoint",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
++        "command": {
++          "description": "Optional entrypoint, replacing the image's (e.g. [\"sh\", \"-c\", \"sleep 3600\"])",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
+         "image": {
+           "description": "Container Image to run in the Pod",
+           "type": "string"
+@@ -958,6 +972,19 @@
+         "port": {
+           "description": "TCP/IP port to expose from the Pod container, 1-65535 (Optional, no port exposed if not provided)",
+           "type": "number"
++        },
++        "replace": {
++          "description": "Re-apply over a Pod (and Service, Route) that an earlier pods_run created with this name. Default false: an existing object of that name is never changed.",
++          "type": "boolean"
++        },
++        "restartPolicy": {
++          "description": "Optional restart policy (default Always); use Never for a one-off command",
++          "enum": [
++            "Always",
++            "OnFailure",
++            "Never"
++          ],
++          "type": "string"
+         }
+       },
+       "required": [
+diff --git a/pkg/toolsets/core/pods.go b/pkg/toolsets/core/pods.go
+index 04f9c56..b9a23fc 100644
+--- a/pkg/toolsets/core/pods.go
++++ b/pkg/toolsets/core/pods.go
+@@ -7,6 +7,7 @@ import (
+ 	"strings"
+ 
+ 	"github.com/google/jsonschema-go/jsonschema"
++	v1 "k8s.io/api/core/v1"
+ 	"k8s.io/apimachinery/pkg/api/resource"
+ 	"k8s.io/kubectl/pkg/metricsutil"
+ 	"k8s.io/utils/ptr"
+@@ -335,6 +336,25 @@ func initPods(inspector api.ClusterInspector) []api.ServerTool {
+ 						Description: "TCP/IP port to expose from the Pod container, 1-65535 (Optional, no port exposed if not provided)",
+ 					},
+ 					"output": outputProperty,
++					"command": {
++						Type:        "array",
++						Items:       &jsonschema.Schema{Type: "string"},
++						Description: "Optional entrypoint, replacing the image's (e.g. [\"sh\", \"-c\", \"sleep 3600\"])",
++					},
++					"args": {
++						Type:        "array",
++						Items:       &jsonschema.Schema{Type: "string"},
++						Description: "Optional arguments to the entrypoint",
++					},
++					"restartPolicy": {
++						Type:        "string",
++						Enum:        []any{"Always", "OnFailure", "Never"},
++						Description: "Optional restart policy (default Always); use Never for a one-off command",
++					},
++					"replace": {
++						Type:        "boolean",
++						Description: "Re-apply over a Pod (and Service, Route) that an earlier pods_run created with this name. Default false: an existing object of that name is never changed.",
++					},
+ 				},
+ 				Required: []string{"image"},
+ 			},
+@@ -622,7 +642,29 @@ func podsRun(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to run pod: %w", err)), nil
+ 	}
+-	resources, err := kubernetes.NewCore(params).PodsRun(params, ns, name, image, port)
++	command, err := stringList(params.GetArguments(), "command")
++	if err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to run pod: %w", err)), nil
++	}
++	args, err := stringList(params.GetArguments(), "args")
++	if err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to run pod: %w", err)), nil
++	}
++	opts := kubernetes.PodsRunOptions{
++		Command:       command,
++		Args:          args,
++		RestartPolicy: v1.RestartPolicy(p.OptionalString("restartPolicy", "")),
++		Replace:       p.OptionalBool("replace", false),
++	}
++	if err := p.Err(); err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to run pod: %w", err)), nil
++	}
++	switch opts.RestartPolicy {
++	case "", v1.RestartPolicyAlways, v1.RestartPolicyOnFailure, v1.RestartPolicyNever:
++	default:
++		return api.NewToolCallResult("", fmt.Errorf("failed to run pod: restartPolicy must be Always, OnFailure or Never, got %q", opts.RestartPolicy)), nil
++	}
++	resources, err := kubernetes.NewCore(params).PodsRunWithOptions(params, ns, name, image, port, opts)
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to run pod %s in namespace %s: %w", name, ns, err)), nil
+ 	}

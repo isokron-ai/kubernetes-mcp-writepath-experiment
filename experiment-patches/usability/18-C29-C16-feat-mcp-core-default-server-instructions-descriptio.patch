@@ -1,0 +1,268 @@
+From fe3e9f5185e2303a30e0dd41962d367f069683f0 Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 12:54:38 -0700
+Subject: [PATCH 18/19] feat(mcp,core): default server instructions;
+ descriptions say how apply, patch and charts work (C29, C16)
+
+The server sent no instructions (server_instructions is empty by
+default), and resources_create_or_update's description prescribed the
+recipe that lost an update on the native session: "fetch it with
+resources_get, modify it, then re-apply the full resource". Other
+descriptions left out what agents then guessed: that local chart paths
+work for helm_install, and that events_list takes a namespace although
+it said "from all namespaces".
+
+Server instructions (C29): when server_instructions is not configured
+and the core toolset is enabled, the server sends five short notes
+(about 150 tokens): the apply is not forced and should carry only the
+fields to set; resources_patch for one-field edits and removals, with
+resourceVersion; namespace-less objects go to the configured
+namespace; receipts and output: full, pending deletes and wait;
+auth_can_i and empty lists. A configured server_instructions replaces
+them, as before; without core nothing is sent.
+
+Descriptions (C16):
+- resources_create_or_update: send only the fields you mean to set,
+  what happens to fields you leave out and to fields other writers own,
+  the upsert and mode: create, resourceVersion as a precondition,
+  resources_patch for removals, the namespace default; the `resource`
+  argument no longer asks for "the full spec";
+- helm_install `chart`: repository charts, OCI or HTTPS URLs, and local
+  chart directories or .tgz files on the server's host;
+- events_list: one namespace or all.
+
+TestServerInstructionsEmpty asserted empty instructions by default; it
+is replaced by a test of the default notes and one that checks no
+notes are sent without the core toolset.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ pkg/mcp/mcp.go                                | 24 ++++++++++++++++++-
+ pkg/mcp/mcp_test.go                           | 17 ++++++++++---
+ pkg/mcp/testdata/toolsets-core-tools.json     |  4 ++--
+ .../toolsets-full-tools-multicluster.json     |  4 ++--
+ .../toolsets-full-tools-openshift.json        |  4 ++--
+ pkg/mcp/testdata/toolsets-full-tools.json     |  4 ++--
+ pkg/mcp/testdata/toolsets-helm-tools.json     |  2 +-
+ pkg/toolsets/core/events.go                   |  2 +-
+ pkg/toolsets/core/resources.go                |  7 ++++--
+ pkg/toolsets/helm/helm.go                     |  2 +-
+ 10 files changed, 53 insertions(+), 17 deletions(-)
+
+diff --git a/pkg/mcp/mcp.go b/pkg/mcp/mcp.go
+index b3d47a3..cdf6bba 100644
+--- a/pkg/mcp/mcp.go
++++ b/pkg/mcp/mcp.go
+@@ -172,7 +172,7 @@ func NewServer(ctx context.Context, configuration Configuration, targetProvider
+ 			},
+ 			&mcp.ServerOptions{
+ 				Capabilities: capabilities,
+-				Instructions: configuration.ServerInstructions.Get(),
++				Instructions: serverInstructions(&configuration),
+ 				Logger:       sdkLogger,
+ 			}),
+ 		p:             targetProvider,
+@@ -527,6 +527,28 @@ func (s *Server) validateToolNames(ctx context.Context, cfg *Configuration) erro
+ 	return errors.Join(errs...)
+ }
+ 
++// DefaultCoreInstructions are sent to clients when server_instructions is not configured
++// and the core toolset is enabled: the few facts about the write tools that agents
++// otherwise learn by losing an update or misreading a result.
++const DefaultCoreInstructions = `Notes on the Kubernetes tools:
++- resources_create_or_update is a server-side apply and does not take over fields by default. Send only the fields you mean to set; fields you leave out keep their values. A field another writer owns is refused with its manager named (force: true takes it over). mode: create never overwrites an existing object.
++- For one-field edits, and to remove labels, annotations, finalizers or keys someone else set, use resources_patch; pass the resourceVersion you read to make it fail if the object changed since.
++- Namespaced objects without metadata.namespace go to the configured namespace.
++- Write results are receipts; pass output: full for whole objects. Deletes report pending when finalizers or termination still hold the object; pass wait to wait for a result.
++- auth_can_i says whether an action is permitted. An empty list says so.`
++
++// serverInstructions returns the configured server_instructions, or the default notes
++// when none are configured and the core toolset is enabled.
++func serverInstructions(cfg *Configuration) string {
++	if instructions := cfg.ServerInstructions.Get(); instructions != "" {
++		return instructions
++	}
++	if cfg.Config != nil && slices.Contains(cfg.Config.Toolsets.Get(), "core") {
++		return DefaultCoreInstructions
++	}
++	return ""
++}
++
+ func (s *Server) toolsetContext(cfg *Configuration) api.ToolsetContext {
+ 	return api.ToolsetContext{
+ 		Inspector:                         internalk8s.NewClusterInspector(s.p),
+diff --git a/pkg/mcp/mcp_test.go b/pkg/mcp/mcp_test.go
+index e3c7bdc..2873497 100644
+--- a/pkg/mcp/mcp_test.go
++++ b/pkg/mcp/mcp_test.go
+@@ -107,11 +107,22 @@ type ServerInstructionsSuite struct {
+ 	BaseMcpSuite
+ }
+ 
+-func (s *ServerInstructionsSuite) TestServerInstructionsEmpty() {
++func (s *ServerInstructionsSuite) TestServerInstructionsDefault() {
+ 	s.InitMcpClient()
+-	s.Run("returns empty instructions when not configured", func() {
++	s.Run("returns the default notes on the core tools when not configured", func() {
+ 		s.Require().NotNil(s.InitializeResult)
+-		s.Empty(s.InitializeResult.Instructions, "instructions should be empty when not configured")
++		s.Equal(DefaultCoreInstructions, s.InitializeResult.Instructions)
++	})
++}
++
++func (s *ServerInstructionsSuite) TestServerInstructionsEmptyWithoutCore() {
++	configtest.OverlayTOML(s.T(), &s.Cfg, `
++		toolsets = [ "config" ]
++	`)
++	s.InitMcpClient()
++	s.Run("returns empty instructions when not configured and core is not enabled", func() {
++		s.Require().NotNil(s.InitializeResult)
++		s.Empty(s.InitializeResult.Instructions)
+ 	})
+ }
+ 
+diff --git a/pkg/mcp/testdata/toolsets-core-tools.json b/pkg/mcp/testdata/toolsets-core-tools.json
+index 6cf1046..3e74c76 100644
+--- a/pkg/mcp/testdata/toolsets-core-tools.json
++++ b/pkg/mcp/testdata/toolsets-core-tools.json
+@@ -133,7 +133,7 @@
+       "readOnlyHint": true,
+       "title": "Events: List"
+     },
+-    "description": "List Kubernetes events (warnings, errors, state changes) for debugging and troubleshooting in the current cluster from all namespaces. Use limit and continue to retrieve a large list one page at a time.",
++    "description": "List Kubernetes events (warnings, errors, state changes) for debugging and troubleshooting in the current cluster, in one namespace or in all namespaces. Use limit and continue to retrieve a large list one page at a time.",
+     "inputSchema": {
+       "properties": {
+         "continue": {
+@@ -1110,7 +1110,7 @@
+       "readOnlyHint": false,
+       "title": "Resources: Create or Update"
+     },
+-    "description": "Create or update a Kubernetes resource via Server-Side Apply. The manifest is the complete desired state: any field this tool previously set and the new manifest omits is removed. To edit an existing resource, fetch it with resources_get, modify it, then re-apply the full resource.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
++    "description": "Create or update Kubernetes resources via Server-Side Apply (one manifest, or several separated by ---). Send only the fields you mean to set: fields you leave out keep their values and owners, and a field another writer owns makes the apply fail with that writer named, so a concurrent change is not reverted (force: true takes such fields over). The apply is an upsert: mode: create only creates and never changes an existing object. A metadata.resourceVersion in the manifest is a precondition: the write fails if the object changed since. For one-field edits, or to remove a field another writer set, use resources_patch. Namespaced objects without metadata.namespace go to the configured namespace.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
+     "inputSchema": {
+       "properties": {
+         "dry_run": {
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+index e5dcbd3..1d35215 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+@@ -190,7 +190,7 @@
+       "readOnlyHint": true,
+       "title": "Events: List"
+     },
+-    "description": "List Kubernetes events (warnings, errors, state changes) for debugging and troubleshooting in the current cluster from all namespaces. Use limit and continue to retrieve a large list one page at a time.",
++    "description": "List Kubernetes events (warnings, errors, state changes) for debugging and troubleshooting in the current cluster, in one namespace or in all namespaces. Use limit and continue to retrieve a large list one page at a time.",
+     "inputSchema": {
+       "properties": {
+         "context": {
+@@ -1223,7 +1223,7 @@
+       "readOnlyHint": false,
+       "title": "Resources: Create or Update"
+     },
+-    "description": "Create or update a Kubernetes resource via Server-Side Apply. The manifest is the complete desired state: any field this tool previously set and the new manifest omits is removed. To edit an existing resource, fetch it with resources_get, modify it, then re-apply the full resource.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
++    "description": "Create or update Kubernetes resources via Server-Side Apply (one manifest, or several separated by ---). Send only the fields you mean to set: fields you leave out keep their values and owners, and a field another writer owns makes the apply fail with that writer named, so a concurrent change is not reverted (force: true takes such fields over). The apply is an upsert: mode: create only creates and never changes an existing object. A metadata.resourceVersion in the manifest is a precondition: the write fails if the object changed since. For one-field edits, or to remove a field another writer set, use resources_patch. Namespaced objects without metadata.namespace go to the configured namespace.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
+     "inputSchema": {
+       "properties": {
+         "context": {
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-openshift.json b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+index 5616011..fcb6d3b 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-openshift.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+@@ -160,7 +160,7 @@
+       "readOnlyHint": true,
+       "title": "Events: List"
+     },
+-    "description": "List Kubernetes events (warnings, errors, state changes) for debugging and troubleshooting in the current cluster from all namespaces. Use limit and continue to retrieve a large list one page at a time.",
++    "description": "List Kubernetes events (warnings, errors, state changes) for debugging and troubleshooting in the current cluster, in one namespace or in all namespaces. Use limit and continue to retrieve a large list one page at a time.",
+     "inputSchema": {
+       "properties": {
+         "continue": {
+@@ -1137,7 +1137,7 @@
+       "readOnlyHint": false,
+       "title": "Resources: Create or Update"
+     },
+-    "description": "Create or update a Kubernetes resource via Server-Side Apply. The manifest is the complete desired state: any field this tool previously set and the new manifest omits is removed. To edit an existing resource, fetch it with resources_get, modify it, then re-apply the full resource.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
++    "description": "Create or update Kubernetes resources via Server-Side Apply (one manifest, or several separated by ---). Send only the fields you mean to set: fields you leave out keep their values and owners, and a field another writer owns makes the apply fail with that writer named, so a concurrent change is not reverted (force: true takes such fields over). The apply is an upsert: mode: create only creates and never changes an existing object. A metadata.resourceVersion in the manifest is a precondition: the write fails if the object changed since. For one-field edits, or to remove a field another writer set, use resources_patch. Namespaced objects without metadata.namespace go to the configured namespace.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
+     "inputSchema": {
+       "properties": {
+         "dry_run": {
+diff --git a/pkg/mcp/testdata/toolsets-full-tools.json b/pkg/mcp/testdata/toolsets-full-tools.json
+index 5616011..fcb6d3b 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools.json
++++ b/pkg/mcp/testdata/toolsets-full-tools.json
+@@ -160,7 +160,7 @@
+       "readOnlyHint": true,
+       "title": "Events: List"
+     },
+-    "description": "List Kubernetes events (warnings, errors, state changes) for debugging and troubleshooting in the current cluster from all namespaces. Use limit and continue to retrieve a large list one page at a time.",
++    "description": "List Kubernetes events (warnings, errors, state changes) for debugging and troubleshooting in the current cluster, in one namespace or in all namespaces. Use limit and continue to retrieve a large list one page at a time.",
+     "inputSchema": {
+       "properties": {
+         "continue": {
+@@ -1137,7 +1137,7 @@
+       "readOnlyHint": false,
+       "title": "Resources: Create or Update"
+     },
+-    "description": "Create or update a Kubernetes resource via Server-Side Apply. The manifest is the complete desired state: any field this tool previously set and the new manifest omits is removed. To edit an existing resource, fetch it with resources_get, modify it, then re-apply the full resource.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
++    "description": "Create or update Kubernetes resources via Server-Side Apply (one manifest, or several separated by ---). Send only the fields you mean to set: fields you leave out keep their values and owners, and a field another writer owns makes the apply fail with that writer named, so a concurrent change is not reverted (force: true takes such fields over). The apply is an upsert: mode: create only creates and never changes an existing object. A metadata.resourceVersion in the manifest is a precondition: the write fails if the object changed since. For one-field edits, or to remove a field another writer set, use resources_patch. Namespaced objects without metadata.namespace go to the configured namespace.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
+     "inputSchema": {
+       "properties": {
+         "dry_run": {
+diff --git a/pkg/mcp/testdata/toolsets-helm-tools.json b/pkg/mcp/testdata/toolsets-helm-tools.json
+index 271576d..707af30 100644
+--- a/pkg/mcp/testdata/toolsets-helm-tools.json
++++ b/pkg/mcp/testdata/toolsets-helm-tools.json
+@@ -19,7 +19,7 @@
+     "inputSchema": {
+       "properties": {
+         "chart": {
+-          "description": "Chart reference to install (for example: stable/grafana, oci://ghcr.io/nginxinc/charts/nginx-ingress)",
++          "description": "Chart reference to install: a repository chart (stable/grafana), an OCI or HTTPS URL (oci://ghcr.io/nginxinc/charts/nginx-ingress), or a path to a chart directory or .tgz file on the server's host (unless allowed_registries is configured)",
+           "type": "string"
+         },
+         "name": {
+diff --git a/pkg/toolsets/core/events.go b/pkg/toolsets/core/events.go
+index af08bb7..7ef6f2c 100644
+--- a/pkg/toolsets/core/events.go
++++ b/pkg/toolsets/core/events.go
+@@ -17,7 +17,7 @@ func initEvents() []api.ServerTool {
+ 	return []api.ServerTool{
+ 		{Tool: api.Tool{
+ 			Name:        "events_list",
+-			Description: "List Kubernetes events (warnings, errors, state changes) for debugging and troubleshooting in the current cluster from all namespaces." + ListPageSentence,
++			Description: "List Kubernetes events (warnings, errors, state changes) for debugging and troubleshooting in the current cluster, in one namespace or in all namespaces." + ListPageSentence,
+ 			InputSchema: &jsonschema.Schema{
+ 				Type: "object",
+ 				Properties: PageProperties(map[string]*jsonschema.Schema{
+diff --git a/pkg/toolsets/core/resources.go b/pkg/toolsets/core/resources.go
+index 0b37a94..d8f996b 100644
+--- a/pkg/toolsets/core/resources.go
++++ b/pkg/toolsets/core/resources.go
+@@ -156,8 +156,11 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
+ 		}), Handler: resourcesGet,
+ 			App: mcpapps.Resource("ui://kubernetes-mcp-server/resources-get", "Resource details", mcpapps.WithDescription("Interactive Kubernetes resource details"))},
+ 		{Tool: api.Tool{
+-			Name:        "resources_create_or_update",
+-			Description: "Create or update a Kubernetes resource via Server-Side Apply. The manifest is the complete desired state: any field this tool previously set and the new manifest omits is removed. To edit an existing resource, fetch it with resources_get, modify it, then re-apply the full resource.\n" + commonApiVersion,
++			Name: "resources_create_or_update",
++			Description: "Create or update Kubernetes resources via Server-Side Apply (one manifest, or several separated by ---). Send only the fields you mean to set: fields you leave out keep their values and owners, " +
++				"and a field another writer owns makes the apply fail with that writer named, so a concurrent change is not reverted (force: true takes such fields over). " +
++				"The apply is an upsert: mode: create only creates and never changes an existing object. A metadata.resourceVersion in the manifest is a precondition: the write fails if the object changed since. " +
++				"For one-field edits, or to remove a field another writer set, use resources_patch. Namespaced objects without metadata.namespace go to the configured namespace.\n" + commonApiVersion,
+ 			InputSchema: &jsonschema.Schema{
+ 				Type: "object",
+ 				Properties: map[string]*jsonschema.Schema{
+diff --git a/pkg/toolsets/helm/helm.go b/pkg/toolsets/helm/helm.go
+index d2a93e6..2555ede 100644
+--- a/pkg/toolsets/helm/helm.go
++++ b/pkg/toolsets/helm/helm.go
+@@ -24,7 +24,7 @@ func initHelm() []api.ServerTool {
+ 				Properties: map[string]*jsonschema.Schema{
+ 					"chart": {
+ 						Type:        "string",
+-						Description: "Chart reference to install (for example: stable/grafana, oci://ghcr.io/nginxinc/charts/nginx-ingress)",
++						Description: "Chart reference to install: a repository chart (stable/grafana), an OCI or HTTPS URL (oci://ghcr.io/nginxinc/charts/nginx-ingress), or a path to a chart directory or .tgz file on the server's host (unless allowed_registries is configured)",
+ 					},
+ 					"values": {
+ 						Type:        "object",

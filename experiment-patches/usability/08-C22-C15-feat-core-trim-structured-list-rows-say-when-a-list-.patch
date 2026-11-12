@@ -1,0 +1,449 @@
+From 845b21f013758dbbe4dcc957c2a831eb275ff535 Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 12:26:06 -0700
+Subject: [PATCH 08/19] feat(core): trim structured list rows; say when a list
+ is empty (C22, C15)
+
+The structured rows of resources_list and the pod lists repeated what
+the request already fixes (apiVersion and kind on every row, Namespace
+when a namespace was given) and carried every column kubectl prints
+only with -o wide (Pods: IP, Node, Nominated Node, Readiness Gates;
+Deployments: Containers, Images, Selector). On the native session that
+was 6,538 tokens of structured rows the agent did not use; Claude Code
+shows the model only the structured channel.
+
+- Structured rows drop apiVersion and kind, Namespace when a namespace
+  was given, and every column the API marks priority > 0 (the -o wide
+  columns). A new `wide: true` argument keeps the wide columns.
+- An empty result says so: "# No <Kind> found in namespace <ns>
+  matching labelSelector ..." instead of an empty text, which agents
+  read as ambiguous (28 calls on the native session). The structured
+  content of an empty table list stays absent, as before.
+- The text table (C11, held) is unchanged, and nothing changes when MCP
+  Apps are enabled, whose UI renders the full rows.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ pkg/mcp/resources_list_trim_test.go           | 66 +++++++++++++
+ pkg/mcp/testdata/toolsets-core-tools.json     | 12 +++
+ .../toolsets-full-tools-multicluster.json     | 12 +++
+ .../toolsets-full-tools-openshift.json        | 12 +++
+ pkg/mcp/testdata/toolsets-full-tools.json     | 12 +++
+ pkg/toolsets/core/listtrim.go                 | 92 +++++++++++++++++++
+ pkg/toolsets/core/pods.go                     | 22 ++++-
+ pkg/toolsets/core/resources.go                |  9 ++
+ 8 files changed, 235 insertions(+), 2 deletions(-)
+ create mode 100644 pkg/mcp/resources_list_trim_test.go
+ create mode 100644 pkg/toolsets/core/listtrim.go
+
+diff --git a/pkg/mcp/resources_list_trim_test.go b/pkg/mcp/resources_list_trim_test.go
+new file mode 100644
+index 0000000..2389023
+--- /dev/null
++++ b/pkg/mcp/resources_list_trim_test.go
+@@ -0,0 +1,66 @@
++package mcp
++
++import (
++	"testing"
++
++	"github.com/modelcontextprotocol/go-sdk/mcp"
++	"github.com/stretchr/testify/suite"
++)
++
++type ResourcesListTrimSuite struct {
++	BaseMcpSuite
++}
++
++func (s *ResourcesListTrimSuite) SetupTest() {
++	s.BaseMcpSuite.SetupTest()
++	s.Cfg.ListOutput.SetForTest("table")
++}
++
++func (s *ResourcesListTrimSuite) rows(result *mcp.CallToolResult) []any {
++	structured, ok := result.StructuredContent.(map[string]any)
++	s.Require().True(ok, "expected structured content, got %T", result.StructuredContent)
++	rows, ok := structured["items"].([]any)
++	s.Require().True(ok, "expected items, got %v", structured)
++	return rows
++}
++
++func (s *ResourcesListTrimSuite) TestRowsOmitWhatTheRequestFixes() {
++	s.InitMcpClient()
++	result, err := s.CallTool("resources_list", map[string]interface{}{"apiVersion": "v1", "kind": "Pod", "namespace": "ns-1"})
++	s.Require().NoError(err)
++	s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++	row := s.rows(result)[0].(map[string]any)
++	s.Contains(row, "Name")
++	s.Contains(row, "Status")
++	for _, dropped := range []string{"apiVersion", "kind", "Namespace", "IP", "Node", "Nominated Node", "Readiness Gates"} {
++		s.NotContainsf(row, dropped, "%s must not be in the default rows", dropped)
++	}
++	s.Contains(result.Content[0].(*mcp.TextContent).Text, "IP", "the text table is unchanged")
++}
++
++func (s *ResourcesListTrimSuite) TestWideKeepsTheWideColumns() {
++	s.InitMcpClient()
++	result, err := s.CallTool("pods_list_in_namespace", map[string]interface{}{"namespace": "ns-1", "wide": true})
++	s.Require().NoError(err)
++	s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++	row := s.rows(result)[0].(map[string]any)
++	s.Contains(row, "IP")
++	s.Contains(row, "Node")
++}
++
++func (s *ResourcesListTrimSuite) TestEmptyListSaysSo() {
++	s.InitMcpClient()
++	result, err := s.CallTool("resources_list", map[string]interface{}{
++		"apiVersion": "v1", "kind": "Pod", "namespace": "ns-1", "labelSelector": "app=none-such",
++	})
++	s.Require().NoError(err)
++	s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++	s.Equal("# No Pod found in namespace ns-1 matching labelSelector \"app=none-such\"\n", result.Content[0].(*mcp.TextContent).Text)
++	result, err = s.CallTool("pods_list_in_namespace", map[string]interface{}{"namespace": "ns-1", "labelSelector": "app=none-such"})
++	s.Require().NoError(err)
++	s.Contains(result.Content[0].(*mcp.TextContent).Text, "# No Pod found in namespace ns-1")
++}
++
++func TestResourcesListTrim(t *testing.T) {
++	suite.Run(t, new(ResourcesListTrimSuite))
++}
+diff --git a/pkg/mcp/testdata/toolsets-core-tools.json b/pkg/mcp/testdata/toolsets-core-tools.json
+index 1fef46a..9258232 100644
+--- a/pkg/mcp/testdata/toolsets-core-tools.json
++++ b/pkg/mcp/testdata/toolsets-core-tools.json
+@@ -607,6 +607,10 @@
+           "description": "Maximum number of items to return. Omit or set to 0 to list everything, which fails if the response exceeds max_backend_response_bytes. Retry with a smaller limit when that happens. The API may return fewer items than requested.",
+           "minimum": 0,
+           "type": "integer"
++        },
++        "wide": {
++          "description": "Include the columns kubectl shows only with -o wide (for Pods: IP, Node, Nominated Node, Readiness Gates; for Deployments: Containers, Images, Selector) in the structured rows. Default false.",
++          "type": "boolean"
+         }
+       },
+       "type": "object"
+@@ -669,6 +673,10 @@
+         "namespace": {
+           "description": "Namespace to list pods from",
+           "type": "string"
++        },
++        "wide": {
++          "description": "Include the columns kubectl shows only with -o wide (for Pods: IP, Node, Nominated Node, Readiness Gates; for Deployments: Containers, Images, Selector) in the structured rows. Default false.",
++          "type": "boolean"
+         }
+       },
+       "required": [
+@@ -1407,6 +1415,10 @@
+         "namespace": {
+           "description": "Optional Namespace to retrieve the namespaced resources from (ignored in case of cluster scoped resources). If not provided, will list resources from all namespaces",
+           "type": "string"
++        },
++        "wide": {
++          "description": "Include the columns kubectl shows only with -o wide (for Pods: IP, Node, Nominated Node, Readiness Gates; for Deployments: Containers, Images, Selector) in the structured rows. Default false.",
++          "type": "boolean"
+         }
+       },
+       "required": [
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+index 1bb7398..75ddf5a 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+@@ -696,6 +696,10 @@
+           "description": "Maximum number of items to return. Omit or set to 0 to list everything, which fails if the response exceeds max_backend_response_bytes. Retry with a smaller limit when that happens. The API may return fewer items than requested.",
+           "minimum": 0,
+           "type": "integer"
++        },
++        "wide": {
++          "description": "Include the columns kubectl shows only with -o wide (for Pods: IP, Node, Nominated Node, Readiness Gates; for Deployments: Containers, Images, Selector) in the structured rows. Default false.",
++          "type": "boolean"
+         }
+       },
+       "type": "object"
+@@ -762,6 +766,10 @@
+         "namespace": {
+           "description": "Namespace to list pods from",
+           "type": "string"
++        },
++        "wide": {
++          "description": "Include the columns kubectl shows only with -o wide (for Pods: IP, Node, Nominated Node, Readiness Gates; for Deployments: Containers, Images, Selector) in the structured rows. Default false.",
++          "type": "boolean"
+         }
+       },
+       "required": [
+@@ -1536,6 +1544,10 @@
+         "namespace": {
+           "description": "Optional Namespace to retrieve the namespaced resources from (ignored in case of cluster scoped resources). If not provided, will list resources from all namespaces",
+           "type": "string"
++        },
++        "wide": {
++          "description": "Include the columns kubectl shows only with -o wide (for Pods: IP, Node, Nominated Node, Readiness Gates; for Deployments: Containers, Images, Selector) in the structured rows. Default false.",
++          "type": "boolean"
+         }
+       },
+       "required": [
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-openshift.json b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+index 1b3c4cb..9e8dada 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-openshift.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+@@ -634,6 +634,10 @@
+           "description": "Maximum number of items to return. Omit or set to 0 to list everything, which fails if the response exceeds max_backend_response_bytes. Retry with a smaller limit when that happens. The API may return fewer items than requested.",
+           "minimum": 0,
+           "type": "integer"
++        },
++        "wide": {
++          "description": "Include the columns kubectl shows only with -o wide (for Pods: IP, Node, Nominated Node, Readiness Gates; for Deployments: Containers, Images, Selector) in the structured rows. Default false.",
++          "type": "boolean"
+         }
+       },
+       "type": "object"
+@@ -696,6 +700,10 @@
+         "namespace": {
+           "description": "Namespace to list pods from",
+           "type": "string"
++        },
++        "wide": {
++          "description": "Include the columns kubectl shows only with -o wide (for Pods: IP, Node, Nominated Node, Readiness Gates; for Deployments: Containers, Images, Selector) in the structured rows. Default false.",
++          "type": "boolean"
+         }
+       },
+       "required": [
+@@ -1434,6 +1442,10 @@
+         "namespace": {
+           "description": "Optional Namespace to retrieve the namespaced resources from (ignored in case of cluster scoped resources). If not provided, will list resources from all namespaces",
+           "type": "string"
++        },
++        "wide": {
++          "description": "Include the columns kubectl shows only with -o wide (for Pods: IP, Node, Nominated Node, Readiness Gates; for Deployments: Containers, Images, Selector) in the structured rows. Default false.",
++          "type": "boolean"
+         }
+       },
+       "required": [
+diff --git a/pkg/mcp/testdata/toolsets-full-tools.json b/pkg/mcp/testdata/toolsets-full-tools.json
+index 1b3c4cb..9e8dada 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools.json
++++ b/pkg/mcp/testdata/toolsets-full-tools.json
+@@ -634,6 +634,10 @@
+           "description": "Maximum number of items to return. Omit or set to 0 to list everything, which fails if the response exceeds max_backend_response_bytes. Retry with a smaller limit when that happens. The API may return fewer items than requested.",
+           "minimum": 0,
+           "type": "integer"
++        },
++        "wide": {
++          "description": "Include the columns kubectl shows only with -o wide (for Pods: IP, Node, Nominated Node, Readiness Gates; for Deployments: Containers, Images, Selector) in the structured rows. Default false.",
++          "type": "boolean"
+         }
+       },
+       "type": "object"
+@@ -696,6 +700,10 @@
+         "namespace": {
+           "description": "Namespace to list pods from",
+           "type": "string"
++        },
++        "wide": {
++          "description": "Include the columns kubectl shows only with -o wide (for Pods: IP, Node, Nominated Node, Readiness Gates; for Deployments: Containers, Images, Selector) in the structured rows. Default false.",
++          "type": "boolean"
+         }
+       },
+       "required": [
+@@ -1434,6 +1442,10 @@
+         "namespace": {
+           "description": "Optional Namespace to retrieve the namespaced resources from (ignored in case of cluster scoped resources). If not provided, will list resources from all namespaces",
+           "type": "string"
++        },
++        "wide": {
++          "description": "Include the columns kubectl shows only with -o wide (for Pods: IP, Node, Nominated Node, Readiness Gates; for Deployments: Containers, Images, Selector) in the structured rows. Default false.",
++          "type": "boolean"
+         }
+       },
+       "required": [
+diff --git a/pkg/toolsets/core/listtrim.go b/pkg/toolsets/core/listtrim.go
+new file mode 100644
+index 0000000..6f617f5
+--- /dev/null
++++ b/pkg/toolsets/core/listtrim.go
+@@ -0,0 +1,92 @@
++package core
++
++import (
++	"fmt"
++
++	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
++	"k8s.io/apimachinery/pkg/runtime"
++
++	"github.com/google/jsonschema-go/jsonschema"
++)
++
++// wideProperty is the schema of the optional `wide` argument of list tools.
++var wideProperty = &jsonschema.Schema{
++	Type: "boolean",
++	Description: "Include the columns kubectl shows only with -o wide (for Pods: IP, Node, Nominated Node, Readiness Gates; " +
++		"for Deployments: Containers, Images, Selector) in the structured rows. Default false.",
++}
++
++// trimTableRows removes from structured list rows what the request already fixes or
++// what kubectl prints only with -o wide: apiVersion and kind (the request names the
++// kind), Namespace when a namespace was given, and columns with priority > 0 unless
++// wide is set. The text table is unchanged.
++func trimTableRows(ret runtime.Unstructured, structured any, namespaceGiven, wide bool) any {
++	drop := map[string]bool{"apiVersion": true, "kind": true}
++	if namespaceGiven {
++		drop["Namespace"] = true
++	}
++	if !wide && ret != nil {
++		columns, _, _ := unstructured.NestedSlice(ret.UnstructuredContent(), "columnDefinitions")
++		for _, c := range columns {
++			col, _ := c.(map[string]any)
++			name, _ := col["name"].(string)
++			if priority, ok := col["priority"].(int64); ok && priority > 0 {
++				drop[name] = true
++			}
++		}
++	}
++	trim := func(rows []map[string]any) []map[string]any {
++		for _, row := range rows {
++			for k := range drop {
++				delete(row, k)
++			}
++		}
++		return rows
++	}
++	switch s := structured.(type) {
++	case []map[string]any:
++		return trim(s)
++	case map[string]any:
++		if rows, ok := s["items"].([]map[string]any); ok {
++			s["items"] = trim(rows)
++			if columns, ok := s["columns"].([]string); ok {
++				kept := make([]string, 0, len(columns))
++				for _, c := range columns {
++					if !drop[c] {
++						kept = append(kept, c)
++					}
++				}
++				s["columns"] = kept
++			}
++		}
++	}
++	return structured
++}
++
++// listLength counts the objects in a list or table result.
++func listLength(ret runtime.Unstructured) int {
++	if list, ok := ret.(*unstructured.UnstructuredList); ok {
++		return len(list.Items)
++	}
++	if ret == nil {
++		return 0
++	}
++	rows, _, _ := unstructured.NestedSlice(ret.UnstructuredContent(), "rows")
++	return len(rows)
++}
++
++// emptyListText says plainly that a list found nothing, and where it looked.
++func emptyListText(kind, namespace, labelSelector, fieldSelector string) string {
++	where := "in any namespace"
++	if namespace != "" {
++		where = "in namespace " + namespace
++	}
++	filters := ""
++	if labelSelector != "" {
++		filters += fmt.Sprintf(" matching labelSelector %q", labelSelector)
++	}
++	if fieldSelector != "" {
++		filters += fmt.Sprintf(" matching fieldSelector %q", fieldSelector)
++	}
++	return fmt.Sprintf("# No %s found %s%s\n", kind, where, filters)
++}
+diff --git a/pkg/toolsets/core/pods.go b/pkg/toolsets/core/pods.go
+index 511d937..3cddebe 100644
+--- a/pkg/toolsets/core/pods.go
++++ b/pkg/toolsets/core/pods.go
+@@ -35,6 +35,7 @@ func initPods(inspector api.ClusterInspector) []api.ServerTool {
+ 						Description: "Optional Kubernetes field selector to filter pods by field values (e.g. 'status.phase=Running', 'spec.nodeName=node1'). Supported fields: metadata.name, metadata.namespace, spec.nodeName, spec.restartPolicy, spec.schedulerName, spec.serviceAccountName, status.phase (Pending/Running/Succeeded/Failed/Unknown), status.podIP, status.nominatedNodeName. Note: CrashLoopBackOff is a container state, not a pod phase, so it cannot be filtered directly. See https://kubernetes.io/docs/concepts/overview/working-with-objects/field-selectors/",
+ 						Pattern:     REGEX_FIELDSELECTOR,
+ 					},
++					"wide": wideProperty,
+ 				}),
+ 			},
+ 			Annotations: api.ToolAnnotations{
+@@ -69,6 +70,7 @@ func initPods(inspector api.ClusterInspector) []api.ServerTool {
+ 						Description: "Optional Kubernetes field selector to filter pods by field values (e.g. 'status.phase=Running', 'spec.nodeName=node1'). Supported fields: metadata.name, metadata.namespace, spec.nodeName, spec.restartPolicy, spec.schedulerName, spec.serviceAccountName, status.phase (Pending/Running/Succeeded/Failed/Unknown), status.podIP, status.nominatedNodeName. Note: CrashLoopBackOff is a container state, not a pod phase, so it cannot be filtered directly. See https://kubernetes.io/docs/concepts/overview/working-with-objects/field-selectors/",
+ 						Pattern:     REGEX_FIELDSELECTOR,
+ 					},
++					"wide": wideProperty,
+ 				}),
+ 				Required: []string{"namespace"},
+ 			},
+@@ -380,11 +382,19 @@ func podsListInAllNamespaces(params api.ToolHandlerParams) (*api.ToolCallResult,
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to list pods in all namespaces: %w", ListErr(err))), nil
+ 	}
++	if listLength(ret) == 0 && !params.Config.AppsEnabled.Get() {
++		text, structured := WithListPage(emptyListText("Pod", "", resourceListOptions.LabelSelector, resourceListOptions.FieldSelector), nil, ret)
++		return api.NewToolCallResultFull(text, structured, nil), nil
++	}
+ 	printed, err := params.ListOutput.PrintObjStructured(ret)
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to render pods: %w", err)), nil
+ 	}
+-	text, structured := WithListPage(printed.Text, tableAppStructured(ret, printed.Structured), ret)
++	structuredRows := tableAppStructured(ret, printed.Structured)
++	if !params.Config.AppsEnabled.Get() && params.ListOutput.AsTable() {
++		structuredRows = trimTableRows(ret, structuredRows, false, p.OptionalBool("wide", false)).(map[string]any)
++	}
++	text, structured := WithListPage(printed.Text, structuredRows, ret)
+ 	return api.NewToolCallResultFull(text, structured, nil), nil
+ }
+ 
+@@ -403,11 +413,19 @@ func podsListInNamespace(params api.ToolHandlerParams) (*api.ToolCallResult, err
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to list pods in namespace %s: %w", ns, ListErr(err))), nil
+ 	}
++	if listLength(ret) == 0 && !params.Config.AppsEnabled.Get() {
++		text, structured := WithListPage(emptyListText("Pod", ns, resourceListOptions.LabelSelector, resourceListOptions.FieldSelector), nil, ret)
++		return api.NewToolCallResultFull(text, structured, nil), nil
++	}
+ 	printed, err := params.ListOutput.PrintObjStructured(ret)
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to render pods: %w", err)), nil
+ 	}
+-	text, structured := WithListPage(printed.Text, tableAppStructured(ret, printed.Structured), ret)
++	structuredRows := tableAppStructured(ret, printed.Structured)
++	if !params.Config.AppsEnabled.Get() && params.ListOutput.AsTable() {
++		structuredRows = trimTableRows(ret, structuredRows, true, p.OptionalBool("wide", false)).(map[string]any)
++	}
++	text, structured := WithListPage(printed.Text, structuredRows, ret)
+ 	return api.NewToolCallResultFull(text, structured, nil), nil
+ }
+ 
+diff --git a/pkg/toolsets/core/resources.go b/pkg/toolsets/core/resources.go
+index 18837fa..bfbfe03 100644
+--- a/pkg/toolsets/core/resources.go
++++ b/pkg/toolsets/core/resources.go
+@@ -85,6 +85,7 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
+ 						Items:       &jsonschema.Schema{Type: "string"},
+ 						Description: "Return only these fields of each object, as dotted paths; [N] picks a list element and [*] every element, e.g. [\"spec.replicas\", \"spec.template.spec.containers[*].image\"].",
+ 					},
++					"wide": wideProperty,
+ 				}),
+ 				Required: []string{"apiVersion", "kind"},
+ 			},
+@@ -557,10 +558,18 @@ func resourcesList(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to list resources: %w", ListErr(err))), nil
+ 	}
++	if listLength(ret) == 0 && !params.Config.AppsEnabled.Get() {
++		text, structured := WithListPage(emptyListText(gvk.Kind, ns, resourceListOptions.LabelSelector, resourceListOptions.FieldSelector), nil, ret)
++		return api.NewToolCallResultFull(text, structured, nil), nil
++	}
+ 	printed, err := params.ListOutput.PrintObjStructured(ret)
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to format resources: %w", err)), nil
+ 	}
++	if !params.Config.AppsEnabled.Get() && params.ListOutput.AsTable() {
++		wide, _ := params.GetArguments()["wide"].(bool)
++		printed.Structured = trimTableRows(ret, printed.Structured, ns != "", wide)
++	}
+ 	// Empty Table responses have no structured output from the printer. Supply
+ 	// an explicit empty list for Apps without altering nonempty or non-Apps results.
+ 	if params.Config.AppsEnabled.Get() && printed.Structured == nil && ret.GetObjectKind().GroupVersionKind() == metav1.SchemeGroupVersion.WithKind("Table") {

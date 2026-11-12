@@ -1,0 +1,277 @@
+From e169b867e31513444c2c13c72c22d6364c645bbd Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 12:42:13 -0700
+Subject: [PATCH 14/19] feat(helm): helm_list shows every release state;
+ helm_uninstall names the state left; all-namespaces fallback (C12, C23,
+ K8S-21)
+
+After a failed helm_uninstall the release stays in `uninstalling`, and
+helm_list answered "No Helm releases found": the tool used the Helm 3
+SDK's default filter (deployed and failed only) and had no way to ask
+for other states (K8S-21). On the native session (job 8) the agent
+could not see what it had left. helm_list with all_namespaces failed
+outright for an identity that may list release Secrets only in its own
+namespace.
+
+- helm_list lists every state by default (Helm 4's CLI default), so a
+  release in uninstalling, pending-install/upgrade/rollback or failed
+  is visible with its status. A new `states` argument (all, deployed,
+  failed, pending, uninstalling, uninstalled, superseded, unknown)
+  narrows it; an unknown state is refused.
+- helm_list with all_namespaces, when the cluster-wide list is
+  forbidden, says so and lists the current (or given) namespace
+  instead (C23).
+- A failed helm_uninstall now also names the state the release was
+  left in and what to do (C12); Helm's own error already lists the
+  objects it could not delete.
+
+The default of helm_list changes what is listed (more states). Tests
+cover the state filter and the fallback under an identity limited to
+one namespace.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ pkg/helm/helm.go                          | 35 ++++++++++++-
+ pkg/mcp/helm_test.go                      | 64 +++++++++++++++++++++++
+ pkg/mcp/testdata/toolsets-helm-tools.json | 17 ++++++
+ pkg/toolsets/helm/helm.go                 | 41 ++++++++++++++-
+ 4 files changed, 155 insertions(+), 2 deletions(-)
+
+diff --git a/pkg/helm/helm.go b/pkg/helm/helm.go
+index bab3fd8..103caed 100644
+--- a/pkg/helm/helm.go
++++ b/pkg/helm/helm.go
+@@ -102,11 +102,44 @@ func (h *Helm) InstallWithOptions(ctx context.Context, chart string, values map[
+ // List lists releases for the specified namespace, or across namespaces when allNamespaces is set.
+ // limit and offset page the releases returned after Helm has loaded them. Zero limit returns every loaded release.
+ func (h *Helm) List(ctx context.Context, namespace string, allNamespaces bool, limit, offset int) (string, error) {
++	return h.ListStates(ctx, namespace, allNamespaces, limit, offset, nil)
++}
++
++// listStates maps helm_list's state names to Helm's list filters.
++var listStates = map[string]action.ListStates{
++	"deployed":     action.ListDeployed,
++	"failed":       action.ListFailed,
++	"pending":      action.ListPendingInstall | action.ListPendingUpgrade | action.ListPendingRollback,
++	"uninstalling": action.ListUninstalling,
++	"uninstalled":  action.ListUninstalled,
++	"superseded":   action.ListSuperseded,
++	"unknown":      action.ListUnknown,
++	"all":          action.ListAll,
++}
++
++// ListStateNames are the values helm_list's states argument accepts.
++var ListStateNames = []string{"all", "deployed", "failed", "pending", "uninstalling", "uninstalled", "superseded", "unknown"}
++
++// ListStates lists releases in the given states; no states means every state (Helm 4's
++// default), so that a release stuck in uninstalling or pending-* is visible.
++func (h *Helm) ListStates(ctx context.Context, namespace string, allNamespaces bool, limit, offset int, states []string) (string, error) {
++	mask := action.ListAll
++	if len(states) > 0 {
++		mask = 0
++		for _, state := range states {
++			m, ok := listStates[state]
++			if !ok {
++				return "", fmt.Errorf("unknown release state %q, valid states are: %s", state, strings.Join(ListStateNames, ", "))
++			}
++			mask |= m
++		}
++	}
+ 	cfg, err := h.newAction(ctx, namespace, allNamespaces)
+ 	if err != nil {
+ 		return "", err
+ 	}
+ 	list := action.NewList(cfg)
++	list.StateMask = mask
+ 	list.AllNamespaces = allNamespaces
+ 	list.Limit = limit
+ 	list.Offset = offset
+@@ -180,7 +213,7 @@ func (h *Helm) UninstallWithOptions(ctx context.Context, name string, namespace
+ 	if errors.Is(err, driver.ErrReleaseNotFound) {
+ 		return fmt.Sprintf("Release %s not found", name), nil
+ 	} else if err != nil {
+-		return "", err
++		return "", h.withReleaseState(ctx, name, h.kubernetes.NamespaceOrDefault(namespace), err)
+ 	} else if uninstalledRelease == nil {
+ 		return fmt.Sprintf("Release %s not found", name), nil
+ 	}
+diff --git a/pkg/mcp/helm_test.go b/pkg/mcp/helm_test.go
+index 5051ceb..4f4abe3 100644
+--- a/pkg/mcp/helm_test.go
++++ b/pkg/mcp/helm_test.go
+@@ -16,6 +16,7 @@ import (
+ 	"github.com/modelcontextprotocol/go-sdk/mcp"
+ 	"github.com/stretchr/testify/suite"
+ 	corev1 "k8s.io/api/core/v1"
++	rbacv1 "k8s.io/api/rbac/v1"
+ 	"k8s.io/apimachinery/pkg/api/errors"
+ 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+ 	"k8s.io/client-go/kubernetes"
+@@ -281,6 +282,69 @@ func (s *HelmSuite) TestHelmList() {
+ 	})
+ }
+ 
++func (s *HelmSuite) TestHelmListStates() {
++	kc := kubernetes.NewForConfigOrDie(test.EnvTestRestConfig())
++	for _, rel := range []struct{ name, status string }{{"release-deployed", "deployed"}, {"release-stuck", "uninstalling"}} {
++		_, err := kc.CoreV1().Secrets("default").Create(s.T().Context(), &corev1.Secret{
++			ObjectMeta: metav1.ObjectMeta{
++				Name:   "sh.helm.release.v1." + rel.name + ".v1",
++				Labels: map[string]string{"owner": "helm", "name": rel.name, "status": rel.status},
++			},
++			Data: map[string][]byte{
++				"release": []byte(base64.StdEncoding.EncodeToString([]byte("{\"name\":\"" + rel.name + "\",\"version\":1,\"info\":{\"status\":\"" + rel.status + "\"}}"))),
++			},
++		}, metav1.CreateOptions{})
++		s.Require().NoError(err)
++	}
++	s.InitMcpClient()
++	s.Run("lists every state by default", func() {
++		result, err := s.CallTool("helm_list", map[string]interface{}{})
++		s.Require().NoError(err)
++		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++		s.Contains(result.Content[0].(*mcp.TextContent).Text, "name: release-stuck")
++		s.Contains(result.Content[0].(*mcp.TextContent).Text, "status: uninstalling")
++	})
++	s.Run("filters by state", func() {
++		result, err := s.CallTool("helm_list", map[string]interface{}{"states": []interface{}{"deployed"}})
++		s.Require().NoError(err)
++		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++		s.Contains(result.Content[0].(*mcp.TextContent).Text, "name: release-deployed")
++		s.NotContains(result.Content[0].(*mcp.TextContent).Text, "release-stuck")
++	})
++	s.Run("an unknown state is refused", func() {
++		result, err := s.CallTool("helm_list", map[string]interface{}{"states": []interface{}{"broken"}})
++		s.Require().NoError(err)
++		s.True(result.IsError)
++	})
++}
++
++func (s *HelmSuite) TestHelmListAllNamespacesFallsBack() {
++	admin := kubernetes.NewForConfigOrDie(test.EnvTest().Config)
++	_, err := admin.RbacV1().Roles("default").Create(s.T().Context(), &rbacv1.Role{
++		ObjectMeta: metav1.ObjectMeta{Name: "helm-list-default-only"},
++		Rules:      []rbacv1.PolicyRule{{Verbs: []string{"get", "list"}, APIGroups: []string{""}, Resources: []string{"secrets", "configmaps"}}},
++	}, metav1.CreateOptions{})
++	s.Require().NoError(err)
++	_, err = admin.RbacV1().RoleBindings("default").Create(s.T().Context(), &rbacv1.RoleBinding{
++		ObjectMeta: metav1.ObjectMeta{Name: "helm-list-default-only"},
++		Subjects:   []rbacv1.Subject{{Kind: "Group", Name: "test:users"}},
++		RoleRef:    rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "Role", Name: "helm-list-default-only"},
++	}, metav1.CreateOptions{})
++	s.Require().NoError(err)
++	defer func() {
++		_ = admin.RbacV1().RoleBindings("default").Delete(context.Background(), "helm-list-default-only", metav1.DeleteOptions{})
++		_ = admin.RbacV1().Roles("default").Delete(context.Background(), "helm-list-default-only", metav1.DeleteOptions{})
++	}()
++	s.InitMcpClient()
++	defer restoreAuth(s.T().Context())
++	revokeAllowAll(s.T())
++	result, err := s.CallTool("helm_list", map[string]interface{}{"all_namespaces": true})
++	s.Require().NoError(err)
++	s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++	s.Contains(result.Content[0].(*mcp.TextContent).Text, "Listing releases in all namespaces is not permitted for this identity")
++	s.Contains(result.Content[0].(*mcp.TextContent).Text, "showing namespace default only")
++}
++
+ func (s *HelmSuite) TestHelmListDenied() {
+ 	configtest.OverlayTOML(s.T(), &s.Cfg, `
+ 		denied_resources = [ { version = "v1", kind = "Secret" } ]
+diff --git a/pkg/mcp/testdata/toolsets-helm-tools.json b/pkg/mcp/testdata/toolsets-helm-tools.json
+index 41bf7da..271576d 100644
+--- a/pkg/mcp/testdata/toolsets-helm-tools.json
++++ b/pkg/mcp/testdata/toolsets-helm-tools.json
+@@ -119,6 +119,23 @@
+           "description": "Number of releases to skip. Send the next offset from a full page, with the same limit.",
+           "minimum": 0,
+           "type": "integer"
++        },
++        "states": {
++          "description": "Release states to list (default: every state, so a release stuck in uninstalling or pending is visible; Helm 3's CLI shows only deployed and failed by default)",
++          "items": {
++            "enum": [
++              "all",
++              "deployed",
++              "failed",
++              "pending",
++              "uninstalling",
++              "uninstalled",
++              "superseded",
++              "unknown"
++            ],
++            "type": "string"
++          },
++          "type": "array"
+         }
+       },
+       "type": "object"
+diff --git a/pkg/toolsets/helm/helm.go b/pkg/toolsets/helm/helm.go
+index e36e122..d2a93e6 100644
+--- a/pkg/toolsets/helm/helm.go
++++ b/pkg/toolsets/helm/helm.go
+@@ -8,6 +8,7 @@ import (
+ 	"github.com/containers/kubernetes-mcp-server/pkg/helm"
+ 	"github.com/containers/kubernetes-mcp-server/pkg/kubernetes"
+ 	"github.com/google/jsonschema-go/jsonschema"
++	apierrors "k8s.io/apimachinery/pkg/api/errors"
+ 	"k8s.io/utils/ptr"
+ 
+ 	"github.com/containers/kubernetes-mcp-server/pkg/api"
+@@ -84,6 +85,11 @@ func initHelm() []api.ServerTool {
+ 						Description: "Number of releases to skip. Send the next offset from a full page, with the same limit.",
+ 						Minimum:     ptr.To(float64(0)),
+ 					},
++					"states": {
++						Type:        "array",
++						Items:       &jsonschema.Schema{Type: "string", Enum: []any{"all", "deployed", "failed", "pending", "uninstalling", "uninstalled", "superseded", "unknown"}},
++						Description: "Release states to list (default: every state, so a release stuck in uninstalling or pending is visible; Helm 3's CLI shows only deployed and failed by default)",
++					},
+ 				},
+ 			},
+ 			Annotations: api.ToolAnnotations{
+@@ -215,7 +221,19 @@ func helmList(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 	if err != nil {
+ 		return api.NewToolCallResult("", err), nil
+ 	}
+-	ret, err := client.List(params.Context, namespace, allNamespaces, limit, offset)
++	states, statesErr := helmStates(params)
++	if statesErr != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to list helm releases: %w", statesErr)), nil
++	}
++	ret, err := client.ListStates(params.Context, namespace, allNamespaces, limit, offset, states)
++	if err != nil && allNamespaces && apierrors.IsForbidden(err) {
++		// C23: say that the cluster-wide list is not permitted and show the namespace instead
++		fallback := params.NamespaceOrDefault(namespace)
++		ret, err = client.ListStates(params.Context, fallback, false, limit, offset, states)
++		if err == nil {
++			ret = fmt.Sprintf("# Listing releases in all namespaces is not permitted for this identity (it cannot list Helm's release Secrets cluster-wide); showing namespace %s only\n", fallback) + ret
++		}
++	}
+ 	if err != nil {
+ 		if kubernetes.IsResponseTooLarge(err) {
+ 			err = fmt.Errorf("%w; retry with a smaller limit", err)
+@@ -270,3 +288,24 @@ func helmWaitOptions(params api.ToolHandlerParams) (helm.InstallOptions, error)
+ 	}
+ 	return opts, nil
+ }
++
++// helmStates reads helm_list's optional states argument.
++func helmStates(params api.ToolHandlerParams) ([]string, error) {
++	raw, ok := params.GetArguments()["states"]
++	if !ok || raw == nil {
++		return nil, nil
++	}
++	list, ok := raw.([]any)
++	if !ok {
++		return nil, fmt.Errorf("states must be an array of strings")
++	}
++	states := make([]string, 0, len(list))
++	for _, item := range list {
++		s, ok := item.(string)
++		if !ok {
++			return nil, fmt.Errorf("states must be an array of strings")
++		}
++		states = append(states, s)
++	}
++	return states, nil
++}

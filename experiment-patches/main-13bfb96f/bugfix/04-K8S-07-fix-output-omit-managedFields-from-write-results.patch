@@ -1,0 +1,126 @@
+From 036ad1efca9222784554e6163056f721e038e543 Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 11:27:48 -0700
+Subject: [PATCH 04/14] fix(output): omit managedFields from write results
+
+Reads strip metadata.managedFields (MarshalYaml handles a single object
+and a list), but write tools pass a slice of objects to MarshalYaml,
+which matched neither case, so every write echoed the field-ownership
+bookkeeping. On a Deployment write that was 766 of 2,194 bytes (35%) of
+the result text. Commented-out cases in MarshalYaml show the intent to
+strip it for every object shape.
+
+MarshalYaml now also strips managedFields from []*unstructured.Unstructured
+and []unstructured.Unstructured. This covers resources_create_or_update,
+pods_run, vm_create, vm_clone and vm_lifecycle.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+(cherry picked from commit 53bf27d999c2b56697ff34f4ddf64ff8ac2afcf8)
+---
+ pkg/mcp/resources_test.go | 10 ++++++++++
+ pkg/output/output.go      | 20 +++++++++++++-------
+ pkg/output/output_test.go | 33 +++++++++++++++++++++++++++++++++
+ 3 files changed, 56 insertions(+), 7 deletions(-)
+
+diff --git a/pkg/mcp/resources_test.go b/pkg/mcp/resources_test.go
+index 8a373c8..3e99e29 100644
+--- a/pkg/mcp/resources_test.go
++++ b/pkg/mcp/resources_test.go
+@@ -1525,3 +1525,13 @@ func (s *ResourcesSuite) TestResourcesCreateOrUpdatePartialFailure() {
+ 		s.False(exists("unknown-kind-a"))
+ 	})
+ }
++
++func (s *ResourcesSuite) TestResourcesCreateOrUpdateOmitsManagedFields() {
++	s.InitMcpClient()
++	result, err := s.CallTool("resources_create_or_update", map[string]interface{}{
++		"resource": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: a-cm-without-managed-fields\n  namespace: default\ndata:\n  key: value\n",
++	})
++	s.Require().NoError(err)
++	s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++	s.NotContains(result.Content[0].(*mcp.TextContent).Text, "managedFields", "write results must omit managedFields like reads do")
++}
+diff --git a/pkg/output/output.go b/pkg/output/output.go
+index 433584d..37c6fe9 100644
+--- a/pkg/output/output.go
++++ b/pkg/output/output.go
+@@ -175,22 +175,28 @@ func tableToStructured(t *metav1.Table) []map[string]any {
+ 	return result
+ }
+ 
++// MarshalYaml renders v as YAML. Kubernetes objects, alone, in a list or in a
++// slice (the shape write tools return), are rendered without
++// metadata.managedFields, as the read path does.
+ func MarshalYaml(v any) (string, error) {
+ 	switch t := v.(type) {
+-	//case unstructured.UnstructuredList:
+-	//	for i := range t.Items {
+-	//		t.Items[i].SetManagedFields(nil)
+-	//	}
+-	//	v = t.Items
+ 	case *unstructured.UnstructuredList:
+ 		for i := range t.Items {
+ 			t.Items[i].SetManagedFields(nil)
+ 		}
+ 		v = t.Items
+-	//case unstructured.Unstructured:
+-	//	t.SetManagedFields(nil)
+ 	case *unstructured.Unstructured:
+ 		t.SetManagedFields(nil)
++	case []*unstructured.Unstructured:
++		for _, item := range t {
++			if item != nil {
++				item.SetManagedFields(nil)
++			}
++		}
++	case []unstructured.Unstructured:
++		for i := range t {
++			t[i].SetManagedFields(nil)
++		}
+ 	}
+ 	ret, err := yml.Marshal(v)
+ 	if err != nil {
+diff --git a/pkg/output/output_test.go b/pkg/output/output_test.go
+index 3a8ff94..d182a53 100644
+--- a/pkg/output/output_test.go
++++ b/pkg/output/output_test.go
+@@ -190,6 +190,39 @@ func (s *OutputSuite) TestTableToStructured() {
+ 	})
+ }
+ 
++func (s *OutputSuite) TestMarshalYamlOmitsManagedFields() {
++	withManagedFields := func(name string) *unstructured.Unstructured {
++		u := &unstructured.Unstructured{Object: map[string]interface{}{
++			"apiVersion": "v1",
++			"kind":       "ConfigMap",
++			"metadata":   map[string]interface{}{"name": name},
++		}}
++		u.SetManagedFields([]metav1.ManagedFieldsEntry{{Manager: "kubernetes-mcp-server", Operation: metav1.ManagedFieldsOperationApply}})
++		return u
++	}
++	s.Run("single object", func() {
++		out, err := MarshalYaml(withManagedFields("one"))
++		s.Require().NoError(err)
++		s.NotContains(out, "managedFields")
++	})
++	s.Run("slice of object pointers (write results)", func() {
++		out, err := MarshalYaml([]*unstructured.Unstructured{withManagedFields("a"), withManagedFields("b")})
++		s.Require().NoError(err)
++		s.NotContains(out, "managedFields")
++		s.Contains(out, "name: b")
++	})
++	s.Run("slice of objects", func() {
++		out, err := MarshalYaml([]unstructured.Unstructured{*withManagedFields("a")})
++		s.Require().NoError(err)
++		s.NotContains(out, "managedFields")
++	})
++	s.Run("list", func() {
++		out, err := MarshalYaml(&unstructured.UnstructuredList{Items: []unstructured.Unstructured{*withManagedFields("a")}})
++		s.Require().NoError(err)
++		s.NotContains(out, "managedFields")
++	})
++}
++
+ func TestOutput(t *testing.T) {
+ 	suite.Run(t, new(OutputSuite))
+ }

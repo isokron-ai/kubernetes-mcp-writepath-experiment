@@ -1,0 +1,275 @@
+From d8ea052fe8bf2696515e2e9370d7ba23232254c6 Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 11:20:59 -0700
+Subject: [PATCH 01/14] fix(core): split multi-document manifests like
+ kubectl's YAML reader
+
+resources_create_or_update split its input with the regular expression
+`\r?\n---\r?\n`. Two valid shapes broke it:
+
+- A separator followed by a space or a comment (`--- `, `--- # db`) was
+  not recognised. The rest of the stream was decoded as one document,
+  so every later document was silently dropped and the call reported
+  success with only the first object applied.
+- A trailing `---` followed by a newline, or a comment-only document,
+  produced an empty document. Decoding it returned a bare "EOF" (nothing
+  written), or `no matches for kind ""` after the earlier documents had
+  already been applied.
+
+The input is now split with apimachinery's YAMLReader, the reader
+kubectl uses: a separator is a line starting with `---`, optionally
+followed by spaces and a comment, and text after it is a syntax error.
+Blank and comment-only documents, and leading or trailing separators,
+are skipped, as kubectl skips them. Every document is decoded, and
+checked for apiVersion and kind, before anything is sent to the
+cluster, so a malformed document fails the call with its position and
+nothing is written. Input with no object at all is refused with a
+message instead of "EOF".
+
+The parser is exported as ParseManifests so it can be tested on its
+own.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ pkg/kubernetes/manifests_test.go | 87 ++++++++++++++++++++++++++++++++
+ pkg/kubernetes/resources.go      | 54 ++++++++++++++++----
+ pkg/mcp/resources_test.go        | 54 ++++++++++++++++++++
+ 3 files changed, 186 insertions(+), 9 deletions(-)
+ create mode 100644 pkg/kubernetes/manifests_test.go
+
+diff --git a/pkg/kubernetes/manifests_test.go b/pkg/kubernetes/manifests_test.go
+new file mode 100644
+index 0000000..9f106d6
+--- /dev/null
++++ b/pkg/kubernetes/manifests_test.go
+@@ -0,0 +1,87 @@
++package kubernetes
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/suite"
++)
++
++type ParseManifestsSuite struct {
++	suite.Suite
++}
++
++func names(s *ParseManifestsSuite, resource string) []string {
++	objs, err := ParseManifests(resource)
++	s.Require().NoError(err)
++	ret := make([]string, 0, len(objs))
++	for _, o := range objs {
++		ret = append(ret, o.GetName())
++	}
++	return ret
++}
++
++const cmA = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: a\n"
++const cmB = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: b\n"
++const cmC = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: c\n"
++
++func (s *ParseManifestsSuite) TestSeparators() {
++	s.Run("plain separator", func() {
++		s.Equal([]string{"a", "b"}, names(s, cmA+"---\n"+cmB))
++	})
++	s.Run("separator followed by a space keeps every later document", func() {
++		s.Equal([]string{"a", "b", "c"}, names(s, cmA+"--- \n"+cmB+"---\n"+cmC))
++	})
++	s.Run("separator followed by a comment keeps every later document", func() {
++		s.Equal([]string{"a", "b", "c"}, names(s, cmA+"--- # second\n"+cmB+"---\n"+cmC))
++	})
++	s.Run("CRLF line endings", func() {
++		s.Equal([]string{"a", "b"}, names(s, "apiVersion: v1\r\nkind: ConfigMap\r\nmetadata:\r\n  name: a\r\n---\r\n"+cmB))
++	})
++	s.Run("leading separator", func() {
++		s.Equal([]string{"a"}, names(s, "---\n"+cmA))
++	})
++	s.Run("trailing separator followed by a newline is ignored", func() {
++		s.Equal([]string{"a", "b"}, names(s, cmA+"---\n"+cmB+"---\n"))
++	})
++	s.Run("trailing separator without a newline is ignored", func() {
++		s.Equal([]string{"a", "b"}, names(s, cmA+"---\n"+cmB+"---"))
++	})
++	s.Run("comment-only document is skipped", func() {
++		s.Equal([]string{"a", "c"}, names(s, cmA+"---\n# nothing here\n---\n"+cmC))
++	})
++	s.Run("blank document is skipped", func() {
++		s.Equal([]string{"a", "c"}, names(s, cmA+"---\n\n---\n"+cmC))
++	})
++	s.Run("JSON object", func() {
++		s.Equal([]string{"j"}, names(s, `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"j"}}`))
++	})
++	s.Run("status is removed", func() {
++		objs, err := ParseManifests(cmA + "status:\n  phase: Ready\n")
++		s.Require().NoError(err)
++		_, hasStatus := objs[0].Object["status"]
++		s.False(hasStatus)
++	})
++}
++
++func (s *ParseManifestsSuite) TestErrors() {
++	s.Run("only separators", func() {
++		_, err := ParseManifests("---\n---\n")
++		s.EqualError(err, "no Kubernetes object found in the resource argument")
++	})
++	s.Run("document without kind names its position", func() {
++		_, err := ParseManifests(cmA + "---\napiVersion: v1\nmetadata:\n  name: b\n")
++		s.EqualError(err, "document 2: apiVersion and kind are required (nothing was applied)")
++	})
++	s.Run("text after a separator is a syntax error, as in kubectl", func() {
++		_, err := ParseManifests(cmA + "--- apiVersion: v1\n" + cmB)
++		s.ErrorContains(err, "invalid Yaml document separator")
++	})
++	s.Run("invalid YAML names its position", func() {
++		_, err := ParseManifests(cmA + "---\nkind: [unclosed\n")
++		s.ErrorContains(err, "document 2:")
++	})
++}
++
++func TestParseManifests(t *testing.T) {
++	suite.Run(t, new(ParseManifestsSuite))
++}
+diff --git a/pkg/kubernetes/resources.go b/pkg/kubernetes/resources.go
+index 5564994..e2c4dee 100644
+--- a/pkg/kubernetes/resources.go
++++ b/pkg/kubernetes/resources.go
+@@ -1,9 +1,12 @@
+ package kubernetes
+ 
+ import (
++	"bufio"
++	"bytes"
+ 	"context"
++	"errors"
+ 	"fmt"
+-	"regexp"
++	"io"
+ 	"strings"
+ 
+ 	"k8s.io/apimachinery/pkg/api/meta"
+@@ -63,21 +66,54 @@ func (c *Core) ResourcesGet(ctx context.Context, gvk *schema.GroupVersionKind, n
+ }
+ 
+ func (c *Core) ResourcesCreateOrUpdate(ctx context.Context, resource string) ([]*unstructured.Unstructured, error) {
+-	separator := regexp.MustCompile(`\r?\n---\r?\n`)
+-	resources := separator.Split(resource, -1)
++	parsedResources, err := ParseManifests(resource)
++	if err != nil {
++		return nil, err
++	}
++	return c.resourcesCreateOrUpdate(ctx, parsedResources)
++}
++
++// ParseManifests splits a YAML or JSON stream into Kubernetes objects the way
++// kubectl's YAML reader does: a document separator is a line starting with
++// "---", optionally followed by spaces and a comment, and documents that hold
++// nothing (blank, comment-only, a trailing separator) are skipped. Every
++// document is decoded before anything is sent to the cluster, so a document
++// that cannot be decoded, or has no apiVersion or kind, fails the whole call
++// without writing anything.
++func ParseManifests(resource string) ([]*unstructured.Unstructured, error) {
++	reader := yaml.NewYAMLReader(bufio.NewReader(strings.NewReader(resource)))
+ 	var parsedResources []*unstructured.Unstructured
+-	for _, r := range resources {
+-		var obj unstructured.Unstructured
+-		if err := yaml.NewYAMLToJSONDecoder(strings.NewReader(r)).Decode(&obj); err != nil {
+-			return nil, err
++	for {
++		document, err := reader.Read()
++		if errors.Is(err, io.EOF) {
++			break
++		}
++		// documents are numbered as the objects they hold: empty ones are not counted
++		index := len(parsedResources) + 1
++		if err != nil {
++			return nil, fmt.Errorf("document %d: %w", index, err)
++		}
++		obj := &unstructured.Unstructured{}
++		if err := yaml.NewYAMLOrJSONDecoder(bytes.NewReader(document), 4096).Decode(&obj.Object); err != nil && !errors.Is(err, io.EOF) {
++			return nil, fmt.Errorf("document %d: %w", index, err)
++		}
++		if len(obj.Object) == 0 {
++			// blank or comment-only document, or a trailing separator
++			continue
++		}
++		if obj.GetAPIVersion() == "" || obj.GetKind() == "" {
++			return nil, fmt.Errorf("document %d: apiVersion and kind are required (nothing was applied)", index)
+ 		}
+ 
+ 		// remove the status from the resource, disallowing agent from directly editing (only controllers should be allowed to do this)
+ 		delete(obj.Object, "status")
+ 
+-		parsedResources = append(parsedResources, &obj)
++		parsedResources = append(parsedResources, obj)
+ 	}
+-	return c.resourcesCreateOrUpdate(ctx, parsedResources)
++	if len(parsedResources) == 0 {
++		return nil, errors.New("no Kubernetes object found in the resource argument")
++	}
++	return parsedResources, nil
+ }
+ 
+ func (c *Core) ResourcesDelete(ctx context.Context, gvk *schema.GroupVersionKind, namespace, name string, gracePeriodSeconds *int64) error {
+diff --git a/pkg/mcp/resources_test.go b/pkg/mcp/resources_test.go
+index fcf94ca..fa1685f 100644
+--- a/pkg/mcp/resources_test.go
++++ b/pkg/mcp/resources_test.go
+@@ -1408,3 +1408,57 @@ func findAPIResourceByKind(resources []apiResourceEntry, kind string) *apiResour
+ func TestResources(t *testing.T) {
+ 	suite.Run(t, new(ResourcesSuite))
+ }
++
++func (s *ResourcesSuite) TestResourcesCreateOrUpdateDocumentSeparators() {
++	s.InitMcpClient()
++	client := kubernetes.NewForConfigOrDie(test.EnvTestRestConfig())
++	cm := func(name string) string {
++		return "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: " + name + "\n  namespace: default\n"
++	}
++	exists := func(name string) bool {
++		_, err := client.CoreV1().ConfigMaps("default").Get(s.T().Context(), name, metav1.GetOptions{})
++		return err == nil
++	}
++	s.Run("separator followed by a space applies every document", func() {
++		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{
++			"resource": cm("sep-space-1") + "--- \n" + cm("sep-space-2") + "---\n" + cm("sep-space-3"),
++		})
++		s.Require().NoError(err)
++		s.Falsef(result.IsError, "call tool failed: %v", result.Content)
++		s.True(exists("sep-space-2"), "second document must be applied")
++		s.True(exists("sep-space-3"), "third document must be applied")
++	})
++	s.Run("separator followed by a comment applies every document", func() {
++		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{
++			"resource": cm("sep-comment-1") + "--- # second\n" + cm("sep-comment-2"),
++		})
++		s.Require().NoError(err)
++		s.Falsef(result.IsError, "call tool failed: %v", result.Content)
++		s.True(exists("sep-comment-2"), "second document must be applied")
++	})
++	s.Run("trailing separator followed by a newline succeeds", func() {
++		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{
++			"resource": cm("sep-trailing-1") + "---\n",
++		})
++		s.Require().NoError(err)
++		s.Falsef(result.IsError, "call tool failed: %v", result.Content)
++		s.True(exists("sep-trailing-1"))
++	})
++	s.Run("comment-only document is skipped", func() {
++		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{
++			"resource": cm("sep-commentdoc-1") + "---\n# only a comment\n---\n" + cm("sep-commentdoc-2"),
++		})
++		s.Require().NoError(err)
++		s.Falsef(result.IsError, "call tool failed: %v", result.Content)
++		s.True(exists("sep-commentdoc-2"))
++	})
++	s.Run("document without kind fails before anything is written", func() {
++		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{
++			"resource": cm("sep-nokind-1") + "---\napiVersion: v1\nmetadata:\n  name: sep-nokind-2\n",
++		})
++		s.Require().NoError(err)
++		s.True(result.IsError)
++		s.Contains(result.Content[0].(*mcp.TextContent).Text, "document 2: apiVersion and kind are required")
++		s.False(exists("sep-nokind-1"), "no document may be applied when one cannot be decoded")
++	})
++}

@@ -1,0 +1,17 @@
+# Rebased on upstream main 13bfb96f: same changes, order and file names as ../../bugfix/SERIES. See ../README.md.
+01-K8S-06-15-fix-core-split-multi-document-manifests-like-kubectl.patch
+02-K8S-01-fix-core-name-applied-and-unattempted-documents-when.patch
+03-K8S-03-fix-core-report-pods_delete-clean-up-failures-and-de.patch
+04-K8S-07-fix-output-omit-managedFields-from-write-results.patch
+05-K8S-08-fix-kubevirt-refuse-vm_create-over-an-existing-Virtu.patch
+06-K8S-09-fix-tekton-kubevirt-refuse-wrongly-typed-params-and-.patch
+07-K8S-11-fix-core-reject-pods_run-ports-outside-1-65535.patch
+08-K8S-12-fix-kubevirt-do-not-annotate-vm_clone-as-idempotent.patch
+09-K8S-14-fix-config-refuse-unknown-tool-names-in-enabled_tool.patch
+10-K8S-19-fix-core-return-pods_exec-output-when-the-command-ex.patch
+11-K8S-20-fix-helm-create-chart-objects-in-the-namespace-argum.patch
+12-K8S-17N-fix-helm-do-not-report-a-refused-release-lookup-as-n.patch
+13-K8S-23-fix-core-skip-the-SelfSubjectAccessReview-when-a-nam.patch
+14-K8S-24-fix-core-format-events_list-timestamps-as-RFC-3339-i.patch
+15-K8S-25-fix-kubevirt-build-vm_create-s-VirtualMachine-as-dat.patch
+16-K8S-02-fix-core-annotate-pods_run-as-destructive-and-never-.patch

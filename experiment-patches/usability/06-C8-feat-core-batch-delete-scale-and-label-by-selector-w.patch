@@ -1,0 +1,1408 @@
+From 4b886a96e94260b5dcb6c5de2c77f3f9c6134949 Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 12:18:43 -0700
+Subject: [PATCH 06/19] feat(core): batch delete, scale and label by selector
+ with per-item results (C8)
+
+Bulk work cost one call per object: job 14 of the native session scaled
+16 Deployments and deleted 15 ConfigMaps in 31 calls; job 5 relabelled
+six objects with six full re-applies (6,994 tokens); job 10 deleted 12
+objects one by one.
+
+- resources_delete and resources_scale take `labelSelector` as an
+  alternative to `name` (exactly one of the two). Every object of the
+  kind in the namespace that matches is handled on its own, and the
+  result has one line per object (deleted / deletion pending / scaled
+  from -> to / failed with the API's reason). The header states the
+  counts and the batch semantics: best_effort, a failure neither stops
+  nor undoes the others. If any object failed, the call is an error.
+- `dry_run: true` with a selector lists the objects that would be
+  affected and changes nothing (validate first).
+- An empty selector is refused, so a batch over a whole kind must be
+  asked for by name. A batch delete sends each object's uid as a
+  precondition, so an object recreated after the list is not deleted.
+- New tool resources_label: set or remove (null) labels on one object
+  or on every match of a selector, with a JSON merge patch on
+  metadata.labels; other labels are left alone. Annotated destructive
+  (a label change can move objects out of a Service's or ReplicaSet's
+  selector) and idempotent.
+
+RBAC metadata gains the list verb that a selector needs. `name` is no
+longer required by the schema of resources_delete and resources_scale;
+the handlers still refuse a call with neither, with the old message.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ pkg/kubernetes/batch.go                       |  59 ++++++
+ pkg/mcp/resources_batch_test.go               | 147 +++++++++++++++
+ pkg/mcp/testdata/toolsets-core-tools.json     | 133 ++++++++++++-
+ .../toolsets-full-tools-multicluster.json     | 137 +++++++++++++-
+ .../toolsets-full-tools-openshift.json        | 133 ++++++++++++-
+ pkg/mcp/testdata/toolsets-full-tools.json     | 133 ++++++++++++-
+ pkg/toolsets/core/batch.go                    | 174 ++++++++++++++++++
+ pkg/toolsets/core/resources.go                | 109 ++++++++++-
+ 8 files changed, 1007 insertions(+), 18 deletions(-)
+ create mode 100644 pkg/kubernetes/batch.go
+ create mode 100644 pkg/mcp/resources_batch_test.go
+ create mode 100644 pkg/toolsets/core/batch.go
+
+diff --git a/pkg/kubernetes/batch.go b/pkg/kubernetes/batch.go
+new file mode 100644
+index 0000000..b0d9982
+--- /dev/null
++++ b/pkg/kubernetes/batch.go
+@@ -0,0 +1,59 @@
++package kubernetes
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"strings"
++
++	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
++	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
++	"k8s.io/apimachinery/pkg/labels"
++	"k8s.io/apimachinery/pkg/runtime/schema"
++	"k8s.io/apimachinery/pkg/types"
++
++	"github.com/containers/kubernetes-mcp-server/pkg/version"
++)
++
++// ResourcesSelect lists the objects of a kind that match a label selector, in the
++// given (or configured) namespace. An empty selector is refused: a batch over a
++// whole kind must be asked for by name.
++func (c *Core) ResourcesSelect(ctx context.Context, gvk *schema.GroupVersionKind, namespace, labelSelector string) ([]unstructured.Unstructured, string, error) {
++	if strings.TrimSpace(labelSelector) == "" {
++		return nil, "", fmt.Errorf("labelSelector must not be empty")
++	}
++	if _, err := labels.Parse(labelSelector); err != nil {
++		return nil, "", fmt.Errorf("invalid labelSelector: %w", err)
++	}
++	gvr, err := c.resourceFor(gvk)
++	if err != nil {
++		return nil, "", err
++	}
++	namespace, err = c.effectiveNamespace(gvk, namespace)
++	if err != nil {
++		return nil, "", err
++	}
++	list, err := c.DynamicClient().Resource(*gvr).Namespace(namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
++	if err != nil {
++		return nil, "", err
++	}
++	return list.Items, namespace, nil
++}
++
++// ResourcesLabel sets (or, with a nil value, removes) labels on one object with a
++// JSON merge patch on metadata.labels. Other labels are left alone.
++func (c *Core) ResourcesLabel(ctx context.Context, gvk *schema.GroupVersionKind, namespace, name string, set map[string]*string) (*unstructured.Unstructured, error) {
++	gvr, err := c.resourceFor(gvk)
++	if err != nil {
++		return nil, err
++	}
++	namespace, err = c.effectiveNamespace(gvk, namespace)
++	if err != nil {
++		return nil, err
++	}
++	body, err := json.Marshal(map[string]any{"metadata": map[string]any{"labels": set}})
++	if err != nil {
++		return nil, err
++	}
++	return c.DynamicClient().Resource(*gvr).Namespace(namespace).Patch(ctx, name, types.MergePatchType, body, metav1.PatchOptions{FieldManager: version.BinaryName})
++}
+diff --git a/pkg/mcp/resources_batch_test.go b/pkg/mcp/resources_batch_test.go
+new file mode 100644
+index 0000000..b3e0196
+--- /dev/null
++++ b/pkg/mcp/resources_batch_test.go
+@@ -0,0 +1,147 @@
++package mcp
++
++import (
++	"fmt"
++	"testing"
++
++	"github.com/modelcontextprotocol/go-sdk/mcp"
++	"github.com/stretchr/testify/suite"
++	appsv1 "k8s.io/api/apps/v1"
++	corev1 "k8s.io/api/core/v1"
++	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
++	"k8s.io/client-go/kubernetes"
++	"k8s.io/utils/ptr"
++
++	"github.com/containers/kubernetes-mcp-server/internal/test"
++)
++
++type ResourcesBatchSuite struct {
++	BaseMcpSuite
++	client    *kubernetes.Clientset
++	namespace string
++}
++
++func (s *ResourcesBatchSuite) SetupTest() {
++	s.BaseMcpSuite.SetupTest()
++	s.client = kubernetes.NewForConfigOrDie(test.EnvTestRestConfig())
++	ns, err := s.client.CoreV1().Namespaces().Create(s.T().Context(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{GenerateName: "batch-"}}, metav1.CreateOptions{})
++	s.Require().NoError(err)
++	s.namespace = ns.Name
++	for i := 0; i < 3; i++ {
++		_, err = s.client.CoreV1().ConfigMaps(s.namespace).Create(s.T().Context(), &corev1.ConfigMap{
++			ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("stale-%d", i), Labels: map[string]string{"cache": "stale"}},
++		}, metav1.CreateOptions{})
++		s.Require().NoError(err)
++	}
++	_, err = s.client.CoreV1().ConfigMaps(s.namespace).Create(s.T().Context(), &corev1.ConfigMap{
++		ObjectMeta: metav1.ObjectMeta{Name: "fresh", Labels: map[string]string{"cache": "fresh"}},
++	}, metav1.CreateOptions{})
++	s.Require().NoError(err)
++	s.InitMcpClient()
++}
++
++func (s *ResourcesBatchSuite) remaining() []string {
++	list, err := s.client.CoreV1().ConfigMaps(s.namespace).List(s.T().Context(), metav1.ListOptions{LabelSelector: "cache"})
++	s.Require().NoError(err)
++	var names []string
++	for _, cm := range list.Items {
++		names = append(names, cm.Name)
++	}
++	return names
++}
++
++func (s *ResourcesBatchSuite) TestDeleteBySelector() {
++	s.Run("dry_run lists the matches and deletes nothing", func() {
++		result, err := s.CallTool("resources_delete", map[string]interface{}{
++			"apiVersion": "v1", "kind": "ConfigMap", "namespace": s.namespace, "labelSelector": "cache=stale", "dry_run": true,
++		})
++		s.Require().NoError(err)
++		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++		s.Contains(result.Content[0].(*mcp.TextContent).Text, "3 matched; 3 would be deleted, 0 failed (dry run: nothing was changed)")
++		s.Len(s.remaining(), 4)
++	})
++	s.Run("deletes every match with one result per object", func() {
++		result, err := s.CallTool("resources_delete", map[string]interface{}{
++			"apiVersion": "v1", "kind": "ConfigMap", "namespace": s.namespace, "labelSelector": "cache=stale",
++		})
++		s.Require().NoError(err)
++		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++		text := result.Content[0].(*mcp.TextContent).Text
++		s.Contains(text, "3 matched; 3 deleted, 0 failed (best_effort")
++		s.Contains(text, "- name: stale-0\n  result: deleted")
++		s.Equal([]string{"fresh"}, s.remaining())
++	})
++	s.Run("an empty selector is refused", func() {
++		result, err := s.CallTool("resources_delete", map[string]interface{}{
++			"apiVersion": "v1", "kind": "ConfigMap", "namespace": s.namespace, "labelSelector": " ",
++		})
++		s.Require().NoError(err)
++		s.True(result.IsError)
++		s.Equal([]string{"fresh"}, s.remaining())
++	})
++	s.Run("name and labelSelector together are refused", func() {
++		result, err := s.CallTool("resources_delete", map[string]interface{}{
++			"apiVersion": "v1", "kind": "ConfigMap", "namespace": s.namespace, "name": "fresh", "labelSelector": "cache=fresh",
++		})
++		s.Require().NoError(err)
++		s.True(result.IsError)
++	})
++}
++
++func (s *ResourcesBatchSuite) TestLabel() {
++	s.Run("labels one object by name, keeping its other labels", func() {
++		result, err := s.CallTool("resources_label", map[string]interface{}{
++			"apiVersion": "v1", "kind": "ConfigMap", "namespace": s.namespace, "name": "fresh", "labels": map[string]interface{}{"tier": "cache"},
++		})
++		s.Require().NoError(err)
++		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++		cm, err := s.client.CoreV1().ConfigMaps(s.namespace).Get(s.T().Context(), "fresh", metav1.GetOptions{})
++		s.Require().NoError(err)
++		s.Equal(map[string]string{"cache": "fresh", "tier": "cache"}, cm.Labels)
++	})
++	s.Run("removes a label from every match", func() {
++		result, err := s.CallTool("resources_label", map[string]interface{}{
++			"apiVersion": "v1", "kind": "ConfigMap", "namespace": s.namespace, "labelSelector": "cache=stale", "labels": map[string]interface{}{"cache": nil, "archived": "true"},
++		})
++		s.Require().NoError(err)
++		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++		s.Contains(result.Content[0].(*mcp.TextContent).Text, "3 matched; 3 labelled, 0 failed")
++		list, err := s.client.CoreV1().ConfigMaps(s.namespace).List(s.T().Context(), metav1.ListOptions{LabelSelector: "archived=true,!cache"})
++		s.Require().NoError(err)
++		s.Len(list.Items, 3)
++	})
++}
++
++func (s *ResourcesBatchSuite) TestScaleBySelector() {
++	for _, name := range []string{"web-1", "web-2"} {
++		_, err := s.client.AppsV1().Deployments(s.namespace).Create(s.T().Context(), &appsv1.Deployment{
++			ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"tier": "storefront"}},
++			Spec: appsv1.DeploymentSpec{
++				Replicas: ptr.To(int32(1)),
++				Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": name}},
++				Template: corev1.PodTemplateSpec{
++					ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": name}},
++					Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "nginx"}}},
++				},
++			},
++		}, metav1.CreateOptions{})
++		s.Require().NoError(err)
++	}
++	result, err := s.CallTool("resources_scale", map[string]interface{}{
++		"apiVersion": "apps/v1", "kind": "Deployment", "namespace": s.namespace, "labelSelector": "tier=storefront", "scale": 0,
++	})
++	s.Require().NoError(err)
++	s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++	text := result.Content[0].(*mcp.TextContent).Text
++	s.Contains(text, "2 matched; 2 scaled, 0 failed")
++	s.Contains(text, "web-1: 1 -> 0 replicas")
++	for _, name := range []string{"web-1", "web-2"} {
++		d, err := s.client.AppsV1().Deployments(s.namespace).Get(s.T().Context(), name, metav1.GetOptions{})
++		s.Require().NoError(err)
++		s.Equal(int32(0), *d.Spec.Replicas)
++	}
++}
++
++func TestResourcesBatch(t *testing.T) {
++	suite.Run(t, new(ResourcesBatchSuite))
++}
+diff --git a/pkg/mcp/testdata/toolsets-core-tools.json b/pkg/mcp/testdata/toolsets-core-tools.json
+index 74452cf..0d9a5df 100644
+--- a/pkg/mcp/testdata/toolsets-core-tools.json
++++ b/pkg/mcp/testdata/toolsets-core-tools.json
+@@ -1057,6 +1057,20 @@
+       "io.kubernetes-mcp-server/rbac": {
+         "bounded": {
+           "requirements": [
++            {
++              "namespace": {
++                "argument": "namespace"
++              },
++              "target": {
++                "gvk": {
++                  "apiVersionArgument": "apiVersion",
++                  "kindArgument": "kind"
++                }
++              },
++              "verbs": [
++                "list"
++              ]
++            },
+             {
+               "namespace": {
+                 "argument": "namespace"
+@@ -1093,6 +1107,10 @@
+           "description": "apiVersion of the resource (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)",
+           "type": "string"
+         },
++        "dry_run": {
++          "description": "With labelSelector: list the objects that would be affected and change nothing.",
++          "type": "boolean"
++        },
+         "gracePeriodSeconds": {
+           "description": "Optional duration in seconds before the object should be deleted. Value must be non-negative integer. The value zero indicates delete immediately. If this value is nil, the default grace period for the specified type will be used",
+           "type": "integer"
+@@ -1101,6 +1119,11 @@
+           "description": "kind of the resource (examples of valid kind are: Pod, Service, Deployment, Ingress)",
+           "type": "string"
+         },
++        "labelSelector": {
++          "description": "Instead of name: act on every object of this kind in the namespace whose labels match (e.g. 'cache=stale'). Must not be empty. Each object is handled on its own (best effort) and gets its own result line.",
++          "pattern": "^([/_.\\-A-Za-z0-9=, ()!])+$",
++          "type": "string"
++        },
+         "name": {
+           "description": "Name of the resource",
+           "type": "string"
+@@ -1129,8 +1152,7 @@
+       },
+       "required": [
+         "apiVersion",
+-        "kind",
+-        "name"
++        "kind"
+       ],
+       "type": "object"
+     },
+@@ -1201,6 +1223,87 @@
+     "name": "resources_get",
+     "title": "Resources: Get"
+   },
++  {
++    "_meta": {
++      "io.kubernetes-mcp-server/rbac": {
++        "bounded": {
++          "requirements": [
++            {
++              "namespace": {
++                "argument": "namespace"
++              },
++              "target": {
++                "gvk": {
++                  "apiVersionArgument": "apiVersion",
++                  "kindArgument": "kind"
++                }
++              },
++              "verbs": [
++                "list",
++                "patch"
++              ]
++            }
++          ]
++        },
++        "version": "v1alpha1"
++      }
++    },
++    "annotations": {
++      "destructiveHint": true,
++      "idempotentHint": true,
++      "openWorldHint": true,
++      "readOnlyHint": false,
++      "title": "Resources: Label"
++    },
++    "description": "Add, change or remove labels on one object (name) or on every object of a kind that matches a label selector, without sending the objects. Other labels are left alone. With labelSelector each object is handled on its own (best effort) and gets its own result line.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
++    "inputSchema": {
++      "properties": {
++        "apiVersion": {
++          "description": "apiVersion of the resources (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)",
++          "type": "string"
++        },
++        "dry_run": {
++          "description": "With labelSelector: list the objects that would be labelled and change nothing.",
++          "type": "boolean"
++        },
++        "kind": {
++          "description": "kind of the resources (examples of valid kind are: Pod, Service, Deployment, ConfigMap)",
++          "type": "string"
++        },
++        "labelSelector": {
++          "description": "Instead of name: label every object of this kind in the namespace whose labels match (e.g. 'app=web'). Must not be empty.",
++          "pattern": "^([/_.\\-A-Za-z0-9=, ()!])+$",
++          "type": "string"
++        },
++        "labels": {
++          "additionalProperties": {
++            "type": [
++              "string",
++              "null"
++            ]
++          },
++          "description": "Labels to set, as key: value; a null value removes the label (e.g. {\"tier\": \"cache\", \"stale\": null})",
++          "type": "object"
++        },
++        "name": {
++          "description": "Name of one object to label (or use labelSelector)",
++          "type": "string"
++        },
++        "namespace": {
++          "description": "Optional Namespace (ignored for cluster scoped resources). If not provided, the configured namespace is used",
++          "type": "string"
++        }
++      },
++      "required": [
++        "apiVersion",
++        "kind",
++        "labels"
++      ],
++      "type": "object"
++    },
++    "name": "resources_label",
++    "title": "Resources: Label"
++  },
+   {
+     "_meta": {
+       "io.kubernetes-mcp-server/rbac": {
+@@ -1372,6 +1475,20 @@
+       "io.kubernetes-mcp-server/rbac": {
+         "bounded": {
+           "requirements": [
++            {
++              "namespace": {
++                "argument": "namespace"
++              },
++              "target": {
++                "gvk": {
++                  "apiVersionArgument": "apiVersion",
++                  "kindArgument": "kind"
++                }
++              },
++              "verbs": [
++                "list"
++              ]
++            },
+             {
+               "namespace": {
+                 "argument": "namespace"
+@@ -1410,10 +1527,19 @@
+           "description": "apiVersion of the resource (examples of valid apiVersion are apps/v1)",
+           "type": "string"
+         },
++        "dry_run": {
++          "description": "With labelSelector: list the objects that would be affected and change nothing.",
++          "type": "boolean"
++        },
+         "kind": {
+           "description": "kind of the resource (examples of valid kind are: StatefulSet, Deployment)",
+           "type": "string"
+         },
++        "labelSelector": {
++          "description": "Instead of name: act on every object of this kind in the namespace whose labels match (e.g. 'cache=stale'). Must not be empty. Each object is handled on its own (best effort) and gets its own result line.",
++          "pattern": "^([/_.\\-A-Za-z0-9=, ()!])+$",
++          "type": "string"
++        },
+         "name": {
+           "description": "Name of the resource",
+           "type": "string"
+@@ -1437,8 +1563,7 @@
+       },
+       "required": [
+         "apiVersion",
+-        "kind",
+-        "name"
++        "kind"
+       ],
+       "type": "object"
+     },
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+index 6b7c4d6..b3e1d30 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+@@ -1170,6 +1170,20 @@
+       "io.kubernetes-mcp-server/rbac": {
+         "bounded": {
+           "requirements": [
++            {
++              "namespace": {
++                "argument": "namespace"
++              },
++              "target": {
++                "gvk": {
++                  "apiVersionArgument": "apiVersion",
++                  "kindArgument": "kind"
++                }
++              },
++              "verbs": [
++                "list"
++              ]
++            },
+             {
+               "namespace": {
+                 "argument": "namespace"
+@@ -1210,6 +1224,10 @@
+           "description": "Optional parameter selecting which context to run the tool in. Defaults to fake-context if not set",
+           "type": "string"
+         },
++        "dry_run": {
++          "description": "With labelSelector: list the objects that would be affected and change nothing.",
++          "type": "boolean"
++        },
+         "gracePeriodSeconds": {
+           "description": "Optional duration in seconds before the object should be deleted. Value must be non-negative integer. The value zero indicates delete immediately. If this value is nil, the default grace period for the specified type will be used",
+           "type": "integer"
+@@ -1218,6 +1236,11 @@
+           "description": "kind of the resource (examples of valid kind are: Pod, Service, Deployment, Ingress)",
+           "type": "string"
+         },
++        "labelSelector": {
++          "description": "Instead of name: act on every object of this kind in the namespace whose labels match (e.g. 'cache=stale'). Must not be empty. Each object is handled on its own (best effort) and gets its own result line.",
++          "pattern": "^([/_.\\-A-Za-z0-9=, ()!])+$",
++          "type": "string"
++        },
+         "name": {
+           "description": "Name of the resource",
+           "type": "string"
+@@ -1246,8 +1269,7 @@
+       },
+       "required": [
+         "apiVersion",
+-        "kind",
+-        "name"
++        "kind"
+       ],
+       "type": "object"
+     },
+@@ -1322,6 +1344,91 @@
+     "name": "resources_get",
+     "title": "Resources: Get"
+   },
++  {
++    "_meta": {
++      "io.kubernetes-mcp-server/rbac": {
++        "bounded": {
++          "requirements": [
++            {
++              "namespace": {
++                "argument": "namespace"
++              },
++              "target": {
++                "gvk": {
++                  "apiVersionArgument": "apiVersion",
++                  "kindArgument": "kind"
++                }
++              },
++              "verbs": [
++                "list",
++                "patch"
++              ]
++            }
++          ]
++        },
++        "version": "v1alpha1"
++      }
++    },
++    "annotations": {
++      "destructiveHint": true,
++      "idempotentHint": true,
++      "openWorldHint": true,
++      "readOnlyHint": false,
++      "title": "Resources: Label"
++    },
++    "description": "Add, change or remove labels on one object (name) or on every object of a kind that matches a label selector, without sending the objects. Other labels are left alone. With labelSelector each object is handled on its own (best effort) and gets its own result line.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
++    "inputSchema": {
++      "properties": {
++        "apiVersion": {
++          "description": "apiVersion of the resources (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)",
++          "type": "string"
++        },
++        "context": {
++          "description": "Optional parameter selecting which context to run the tool in. Defaults to fake-context if not set",
++          "type": "string"
++        },
++        "dry_run": {
++          "description": "With labelSelector: list the objects that would be labelled and change nothing.",
++          "type": "boolean"
++        },
++        "kind": {
++          "description": "kind of the resources (examples of valid kind are: Pod, Service, Deployment, ConfigMap)",
++          "type": "string"
++        },
++        "labelSelector": {
++          "description": "Instead of name: label every object of this kind in the namespace whose labels match (e.g. 'app=web'). Must not be empty.",
++          "pattern": "^([/_.\\-A-Za-z0-9=, ()!])+$",
++          "type": "string"
++        },
++        "labels": {
++          "additionalProperties": {
++            "type": [
++              "string",
++              "null"
++            ]
++          },
++          "description": "Labels to set, as key: value; a null value removes the label (e.g. {\"tier\": \"cache\", \"stale\": null})",
++          "type": "object"
++        },
++        "name": {
++          "description": "Name of one object to label (or use labelSelector)",
++          "type": "string"
++        },
++        "namespace": {
++          "description": "Optional Namespace (ignored for cluster scoped resources). If not provided, the configured namespace is used",
++          "type": "string"
++        }
++      },
++      "required": [
++        "apiVersion",
++        "kind",
++        "labels"
++      ],
++      "type": "object"
++    },
++    "name": "resources_label",
++    "title": "Resources: Label"
++  },
+   {
+     "_meta": {
+       "io.kubernetes-mcp-server/rbac": {
+@@ -1501,6 +1608,20 @@
+       "io.kubernetes-mcp-server/rbac": {
+         "bounded": {
+           "requirements": [
++            {
++              "namespace": {
++                "argument": "namespace"
++              },
++              "target": {
++                "gvk": {
++                  "apiVersionArgument": "apiVersion",
++                  "kindArgument": "kind"
++                }
++              },
++              "verbs": [
++                "list"
++              ]
++            },
+             {
+               "namespace": {
+                 "argument": "namespace"
+@@ -1543,10 +1664,19 @@
+           "description": "Optional parameter selecting which context to run the tool in. Defaults to fake-context if not set",
+           "type": "string"
+         },
++        "dry_run": {
++          "description": "With labelSelector: list the objects that would be affected and change nothing.",
++          "type": "boolean"
++        },
+         "kind": {
+           "description": "kind of the resource (examples of valid kind are: StatefulSet, Deployment)",
+           "type": "string"
+         },
++        "labelSelector": {
++          "description": "Instead of name: act on every object of this kind in the namespace whose labels match (e.g. 'cache=stale'). Must not be empty. Each object is handled on its own (best effort) and gets its own result line.",
++          "pattern": "^([/_.\\-A-Za-z0-9=, ()!])+$",
++          "type": "string"
++        },
+         "name": {
+           "description": "Name of the resource",
+           "type": "string"
+@@ -1570,8 +1700,7 @@
+       },
+       "required": [
+         "apiVersion",
+-        "kind",
+-        "name"
++        "kind"
+       ],
+       "type": "object"
+     },
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-openshift.json b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+index 7185942..fdf84ac 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-openshift.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+@@ -1084,6 +1084,20 @@
+       "io.kubernetes-mcp-server/rbac": {
+         "bounded": {
+           "requirements": [
++            {
++              "namespace": {
++                "argument": "namespace"
++              },
++              "target": {
++                "gvk": {
++                  "apiVersionArgument": "apiVersion",
++                  "kindArgument": "kind"
++                }
++              },
++              "verbs": [
++                "list"
++              ]
++            },
+             {
+               "namespace": {
+                 "argument": "namespace"
+@@ -1120,6 +1134,10 @@
+           "description": "apiVersion of the resource (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)",
+           "type": "string"
+         },
++        "dry_run": {
++          "description": "With labelSelector: list the objects that would be affected and change nothing.",
++          "type": "boolean"
++        },
+         "gracePeriodSeconds": {
+           "description": "Optional duration in seconds before the object should be deleted. Value must be non-negative integer. The value zero indicates delete immediately. If this value is nil, the default grace period for the specified type will be used",
+           "type": "integer"
+@@ -1128,6 +1146,11 @@
+           "description": "kind of the resource (examples of valid kind are: Pod, Service, Deployment, Ingress)",
+           "type": "string"
+         },
++        "labelSelector": {
++          "description": "Instead of name: act on every object of this kind in the namespace whose labels match (e.g. 'cache=stale'). Must not be empty. Each object is handled on its own (best effort) and gets its own result line.",
++          "pattern": "^([/_.\\-A-Za-z0-9=, ()!])+$",
++          "type": "string"
++        },
+         "name": {
+           "description": "Name of the resource",
+           "type": "string"
+@@ -1156,8 +1179,7 @@
+       },
+       "required": [
+         "apiVersion",
+-        "kind",
+-        "name"
++        "kind"
+       ],
+       "type": "object"
+     },
+@@ -1228,6 +1250,87 @@
+     "name": "resources_get",
+     "title": "Resources: Get"
+   },
++  {
++    "_meta": {
++      "io.kubernetes-mcp-server/rbac": {
++        "bounded": {
++          "requirements": [
++            {
++              "namespace": {
++                "argument": "namespace"
++              },
++              "target": {
++                "gvk": {
++                  "apiVersionArgument": "apiVersion",
++                  "kindArgument": "kind"
++                }
++              },
++              "verbs": [
++                "list",
++                "patch"
++              ]
++            }
++          ]
++        },
++        "version": "v1alpha1"
++      }
++    },
++    "annotations": {
++      "destructiveHint": true,
++      "idempotentHint": true,
++      "openWorldHint": true,
++      "readOnlyHint": false,
++      "title": "Resources: Label"
++    },
++    "description": "Add, change or remove labels on one object (name) or on every object of a kind that matches a label selector, without sending the objects. Other labels are left alone. With labelSelector each object is handled on its own (best effort) and gets its own result line.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
++    "inputSchema": {
++      "properties": {
++        "apiVersion": {
++          "description": "apiVersion of the resources (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)",
++          "type": "string"
++        },
++        "dry_run": {
++          "description": "With labelSelector: list the objects that would be labelled and change nothing.",
++          "type": "boolean"
++        },
++        "kind": {
++          "description": "kind of the resources (examples of valid kind are: Pod, Service, Deployment, ConfigMap)",
++          "type": "string"
++        },
++        "labelSelector": {
++          "description": "Instead of name: label every object of this kind in the namespace whose labels match (e.g. 'app=web'). Must not be empty.",
++          "pattern": "^([/_.\\-A-Za-z0-9=, ()!])+$",
++          "type": "string"
++        },
++        "labels": {
++          "additionalProperties": {
++            "type": [
++              "string",
++              "null"
++            ]
++          },
++          "description": "Labels to set, as key: value; a null value removes the label (e.g. {\"tier\": \"cache\", \"stale\": null})",
++          "type": "object"
++        },
++        "name": {
++          "description": "Name of one object to label (or use labelSelector)",
++          "type": "string"
++        },
++        "namespace": {
++          "description": "Optional Namespace (ignored for cluster scoped resources). If not provided, the configured namespace is used",
++          "type": "string"
++        }
++      },
++      "required": [
++        "apiVersion",
++        "kind",
++        "labels"
++      ],
++      "type": "object"
++    },
++    "name": "resources_label",
++    "title": "Resources: Label"
++  },
+   {
+     "_meta": {
+       "io.kubernetes-mcp-server/rbac": {
+@@ -1399,6 +1502,20 @@
+       "io.kubernetes-mcp-server/rbac": {
+         "bounded": {
+           "requirements": [
++            {
++              "namespace": {
++                "argument": "namespace"
++              },
++              "target": {
++                "gvk": {
++                  "apiVersionArgument": "apiVersion",
++                  "kindArgument": "kind"
++                }
++              },
++              "verbs": [
++                "list"
++              ]
++            },
+             {
+               "namespace": {
+                 "argument": "namespace"
+@@ -1437,10 +1554,19 @@
+           "description": "apiVersion of the resource (examples of valid apiVersion are apps/v1)",
+           "type": "string"
+         },
++        "dry_run": {
++          "description": "With labelSelector: list the objects that would be affected and change nothing.",
++          "type": "boolean"
++        },
+         "kind": {
+           "description": "kind of the resource (examples of valid kind are: StatefulSet, Deployment)",
+           "type": "string"
+         },
++        "labelSelector": {
++          "description": "Instead of name: act on every object of this kind in the namespace whose labels match (e.g. 'cache=stale'). Must not be empty. Each object is handled on its own (best effort) and gets its own result line.",
++          "pattern": "^([/_.\\-A-Za-z0-9=, ()!])+$",
++          "type": "string"
++        },
+         "name": {
+           "description": "Name of the resource",
+           "type": "string"
+@@ -1464,8 +1590,7 @@
+       },
+       "required": [
+         "apiVersion",
+-        "kind",
+-        "name"
++        "kind"
+       ],
+       "type": "object"
+     },
+diff --git a/pkg/mcp/testdata/toolsets-full-tools.json b/pkg/mcp/testdata/toolsets-full-tools.json
+index 7185942..fdf84ac 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools.json
++++ b/pkg/mcp/testdata/toolsets-full-tools.json
+@@ -1084,6 +1084,20 @@
+       "io.kubernetes-mcp-server/rbac": {
+         "bounded": {
+           "requirements": [
++            {
++              "namespace": {
++                "argument": "namespace"
++              },
++              "target": {
++                "gvk": {
++                  "apiVersionArgument": "apiVersion",
++                  "kindArgument": "kind"
++                }
++              },
++              "verbs": [
++                "list"
++              ]
++            },
+             {
+               "namespace": {
+                 "argument": "namespace"
+@@ -1120,6 +1134,10 @@
+           "description": "apiVersion of the resource (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)",
+           "type": "string"
+         },
++        "dry_run": {
++          "description": "With labelSelector: list the objects that would be affected and change nothing.",
++          "type": "boolean"
++        },
+         "gracePeriodSeconds": {
+           "description": "Optional duration in seconds before the object should be deleted. Value must be non-negative integer. The value zero indicates delete immediately. If this value is nil, the default grace period for the specified type will be used",
+           "type": "integer"
+@@ -1128,6 +1146,11 @@
+           "description": "kind of the resource (examples of valid kind are: Pod, Service, Deployment, Ingress)",
+           "type": "string"
+         },
++        "labelSelector": {
++          "description": "Instead of name: act on every object of this kind in the namespace whose labels match (e.g. 'cache=stale'). Must not be empty. Each object is handled on its own (best effort) and gets its own result line.",
++          "pattern": "^([/_.\\-A-Za-z0-9=, ()!])+$",
++          "type": "string"
++        },
+         "name": {
+           "description": "Name of the resource",
+           "type": "string"
+@@ -1156,8 +1179,7 @@
+       },
+       "required": [
+         "apiVersion",
+-        "kind",
+-        "name"
++        "kind"
+       ],
+       "type": "object"
+     },
+@@ -1228,6 +1250,87 @@
+     "name": "resources_get",
+     "title": "Resources: Get"
+   },
++  {
++    "_meta": {
++      "io.kubernetes-mcp-server/rbac": {
++        "bounded": {
++          "requirements": [
++            {
++              "namespace": {
++                "argument": "namespace"
++              },
++              "target": {
++                "gvk": {
++                  "apiVersionArgument": "apiVersion",
++                  "kindArgument": "kind"
++                }
++              },
++              "verbs": [
++                "list",
++                "patch"
++              ]
++            }
++          ]
++        },
++        "version": "v1alpha1"
++      }
++    },
++    "annotations": {
++      "destructiveHint": true,
++      "idempotentHint": true,
++      "openWorldHint": true,
++      "readOnlyHint": false,
++      "title": "Resources: Label"
++    },
++    "description": "Add, change or remove labels on one object (name) or on every object of a kind that matches a label selector, without sending the objects. Other labels are left alone. With labelSelector each object is handled on its own (best effort) and gets its own result line.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
++    "inputSchema": {
++      "properties": {
++        "apiVersion": {
++          "description": "apiVersion of the resources (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)",
++          "type": "string"
++        },
++        "dry_run": {
++          "description": "With labelSelector: list the objects that would be labelled and change nothing.",
++          "type": "boolean"
++        },
++        "kind": {
++          "description": "kind of the resources (examples of valid kind are: Pod, Service, Deployment, ConfigMap)",
++          "type": "string"
++        },
++        "labelSelector": {
++          "description": "Instead of name: label every object of this kind in the namespace whose labels match (e.g. 'app=web'). Must not be empty.",
++          "pattern": "^([/_.\\-A-Za-z0-9=, ()!])+$",
++          "type": "string"
++        },
++        "labels": {
++          "additionalProperties": {
++            "type": [
++              "string",
++              "null"
++            ]
++          },
++          "description": "Labels to set, as key: value; a null value removes the label (e.g. {\"tier\": \"cache\", \"stale\": null})",
++          "type": "object"
++        },
++        "name": {
++          "description": "Name of one object to label (or use labelSelector)",
++          "type": "string"
++        },
++        "namespace": {
++          "description": "Optional Namespace (ignored for cluster scoped resources). If not provided, the configured namespace is used",
++          "type": "string"
++        }
++      },
++      "required": [
++        "apiVersion",
++        "kind",
++        "labels"
++      ],
++      "type": "object"
++    },
++    "name": "resources_label",
++    "title": "Resources: Label"
++  },
+   {
+     "_meta": {
+       "io.kubernetes-mcp-server/rbac": {
+@@ -1399,6 +1502,20 @@
+       "io.kubernetes-mcp-server/rbac": {
+         "bounded": {
+           "requirements": [
++            {
++              "namespace": {
++                "argument": "namespace"
++              },
++              "target": {
++                "gvk": {
++                  "apiVersionArgument": "apiVersion",
++                  "kindArgument": "kind"
++                }
++              },
++              "verbs": [
++                "list"
++              ]
++            },
+             {
+               "namespace": {
+                 "argument": "namespace"
+@@ -1437,10 +1554,19 @@
+           "description": "apiVersion of the resource (examples of valid apiVersion are apps/v1)",
+           "type": "string"
+         },
++        "dry_run": {
++          "description": "With labelSelector: list the objects that would be affected and change nothing.",
++          "type": "boolean"
++        },
+         "kind": {
+           "description": "kind of the resource (examples of valid kind are: StatefulSet, Deployment)",
+           "type": "string"
+         },
++        "labelSelector": {
++          "description": "Instead of name: act on every object of this kind in the namespace whose labels match (e.g. 'cache=stale'). Must not be empty. Each object is handled on its own (best effort) and gets its own result line.",
++          "pattern": "^([/_.\\-A-Za-z0-9=, ()!])+$",
++          "type": "string"
++        },
+         "name": {
+           "description": "Name of the resource",
+           "type": "string"
+@@ -1464,8 +1590,7 @@
+       },
+       "required": [
+         "apiVersion",
+-        "kind",
+-        "name"
++        "kind"
+       ],
+       "type": "object"
+     },
+diff --git a/pkg/toolsets/core/batch.go b/pkg/toolsets/core/batch.go
+new file mode 100644
+index 0000000..d2c7e7d
+--- /dev/null
++++ b/pkg/toolsets/core/batch.go
+@@ -0,0 +1,174 @@
++package core
++
++import (
++	"fmt"
++	"strings"
++
++	"k8s.io/apimachinery/pkg/runtime/schema"
++
++	"github.com/containers/kubernetes-mcp-server/pkg/api"
++	"github.com/containers/kubernetes-mcp-server/pkg/kubernetes"
++	"github.com/containers/kubernetes-mcp-server/pkg/output"
++)
++
++// batchItem is one object's outcome in a batch call.
++type batchItem struct {
++	Name   string `json:"name"`
++	Result string `json:"result"`
++	Error  string `json:"error,omitempty"`
++}
++
++// batchResult renders a best-effort batch: each object is handled on its own, a
++// failure does not stop the others, and every object gets its own result line.
++func batchResult(action string, gvk *schema.GroupVersionKind, namespace, selector string, items []batchItem, dryRun bool) *api.ToolCallResult {
++	counts := map[string]int{}
++	failed := 0
++	for _, item := range items {
++		if item.Error != "" {
++			failed++
++		} else {
++			counts[item.Result]++
++		}
++	}
++	where := ""
++	if namespace != "" {
++		where = " in namespace " + namespace
++	}
++	var summary []string
++	for _, key := range []string{"deleted", "deletion pending", "scaled", "unchanged", "labelled", "would be deleted", "would be scaled", "would be labelled"} {
++		if counts[key] > 0 {
++			summary = append(summary, fmt.Sprintf("%d %s", counts[key], key))
++		}
++	}
++	summary = append(summary, fmt.Sprintf("%d failed", failed))
++	mode := "best_effort: each object is handled on its own; a failure does not stop or undo the others"
++	if dryRun {
++		mode = "dry run: nothing was changed"
++	}
++	header := fmt.Sprintf("# %s %s%s with labelSelector %q: %d matched; %s (%s)\n", action, gvk.Kind, where, selector, len(items), strings.Join(summary, ", "), mode)
++	if len(items) == 0 {
++		return api.NewToolCallResult(header, nil)
++	}
++	body, err := output.MarshalYaml(items)
++	var callErr error
++	if failed > 0 {
++		callErr = fmt.Errorf("%s%s", header, body)
++		return api.NewToolCallResult("", callErr)
++	}
++	return api.NewToolCallResult(header+body, err)
++}
++
++func resourcesDeleteBySelector(params api.ToolHandlerParams, gvk *schema.GroupVersionKind, ns, selector string, opts kubernetes.DeleteOptions, dryRun bool) (*api.ToolCallResult, error) {
++	core := kubernetes.NewCore(params)
++	objs, namespace, err := core.ResourcesSelect(params, gvk, ns, selector)
++	if err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to delete resources: %w", err)), nil
++	}
++	items := make([]batchItem, 0, len(objs))
++	for _, obj := range objs {
++		item := batchItem{Name: obj.GetName()}
++		if dryRun {
++			item.Result = "would be deleted"
++			items = append(items, item)
++			continue
++		}
++		perObject := opts
++		perObject.UID = string(obj.GetUID()) // never delete an object recreated after the list
++		outcome, deleteErr := core.ResourcesDeleteWithOptions(params, gvk, namespace, obj.GetName(), perObject)
++		switch {
++		case deleteErr != nil:
++			item.Result, item.Error = "failed", deleteErr.Error()
++		case outcome.Pending:
++			item.Result = "deletion pending"
++		default:
++			item.Result = "deleted"
++		}
++		items = append(items, item)
++	}
++	return batchResult("Delete", gvk, namespace, selector, items, dryRun), nil
++}
++
++func resourcesScaleBySelector(params api.ToolHandlerParams, gvk *schema.GroupVersionKind, ns, selector string, desired int64, dryRun bool) (*api.ToolCallResult, error) {
++	core := kubernetes.NewCore(params)
++	objs, namespace, err := core.ResourcesSelect(params, gvk, ns, selector)
++	if err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to scale resources: %w", err)), nil
++	}
++	items := make([]batchItem, 0, len(objs))
++	for _, obj := range objs {
++		item := batchItem{Name: obj.GetName()}
++		if dryRun {
++			item.Result = "would be scaled"
++			items = append(items, item)
++			continue
++		}
++		scale, scaleErr := core.ResourcesScale(params.Context, gvk, namespace, obj.GetName(), desired, true)
++		if scaleErr != nil {
++			item.Result, item.Error = "failed", scaleErr.Error()
++		} else {
++			item.Result = "scaled"
++			item.Name = fmt.Sprintf("%s: %s -> %d replicas", obj.GetName(), scale.GetAnnotations()[kubernetes.ScalePreviousReplicasAnnotation], desired)
++		}
++		items = append(items, item)
++	}
++	return batchResult("Scale", gvk, namespace, selector, items, dryRun), nil
++}
++
++func resourcesLabel(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
++	gvk, err := parseGroupVersionKind(params.GetArguments())
++	if err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to label resources, %s", err)), nil
++	}
++	p := api.WrapParams(params)
++	ns := p.OptionalString("namespace", "")
++	name := p.OptionalString("name", "")
++	selector := p.OptionalString("labelSelector", "")
++	dryRun := p.OptionalBool("dry_run", false)
++	if err := p.Err(); err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to label resources: %w", err)), nil
++	}
++	if (name == "") == (selector == "") {
++		return api.NewToolCallResult("", fmt.Errorf("failed to label resources: pass either name or labelSelector")), nil
++	}
++	raw, ok := params.GetArguments()["labels"].(map[string]any)
++	if !ok || len(raw) == 0 {
++		return api.NewToolCallResult("", fmt.Errorf("failed to label resources: labels must be a non-empty object of label: value (null removes)")), nil
++	}
++	set := make(map[string]*string, len(raw))
++	for k, v := range raw {
++		switch value := v.(type) {
++		case nil:
++			set[k] = nil
++		case string:
++			set[k] = &value
++		default:
++			return api.NewToolCallResult("", fmt.Errorf("failed to label resources: label %q must be a string or null, got %T", k, v)), nil
++		}
++	}
++	core := kubernetes.NewCore(params)
++	if name != "" {
++		labelled, err := core.ResourcesLabel(params, gvk, ns, name, set)
++		if err != nil {
++			return api.NewToolCallResult("", fmt.Errorf("failed to label resource: %w", err)), nil
++		}
++		text, err := output.MarshalYaml(map[string]any{"name": labelled.GetName(), "labels": labelled.GetLabels(), "resourceVersion": labelled.GetResourceVersion()})
++		return api.NewToolCallResult(fmt.Sprintf("# %s %s labelled\n", gvk.Kind, name)+text, err), nil
++	}
++	objs, namespace, err := core.ResourcesSelect(params, gvk, ns, selector)
++	if err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to label resources: %w", err)), nil
++	}
++	items := make([]batchItem, 0, len(objs))
++	for _, obj := range objs {
++		item := batchItem{Name: obj.GetName()}
++		if dryRun {
++			item.Result = "would be labelled"
++		} else if _, err := core.ResourcesLabel(params, gvk, namespace, obj.GetName(), set); err != nil {
++			item.Result, item.Error = "failed", err.Error()
++		} else {
++			item.Result = "labelled"
++		}
++		items = append(items, item)
++	}
++	return batchResult("Label", gvk, namespace, selector, items, dryRun), nil
++}
+diff --git a/pkg/toolsets/core/resources.go b/pkg/toolsets/core/resources.go
+index 0d15099..d6b20cc 100644
+--- a/pkg/toolsets/core/resources.go
++++ b/pkg/toolsets/core/resources.go
+@@ -207,6 +207,46 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
+ 			Namespace:    &api.RBACNamespace{Argument: "namespace"},
+ 			ResourceName: &api.RBACResourceName{Argument: "name"},
+ 		}), Handler: resourcesPatch},
++		{Tool: api.Tool{
++			Name: "resources_label",
++			Description: "Add, change or remove labels on one object (name) or on every object of a kind that matches a label selector, without sending the objects. " +
++				"Other labels are left alone. With labelSelector each object is handled on its own (best effort) and gets its own result line.\n" + commonApiVersion,
++			InputSchema: &jsonschema.Schema{
++				Type: "object",
++				Properties: map[string]*jsonschema.Schema{
++					"apiVersion": {Type: "string", Description: "apiVersion of the resources (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)"},
++					"kind":       {Type: "string", Description: "kind of the resources (examples of valid kind are: Pod, Service, Deployment, ConfigMap)"},
++					"namespace":  {Type: "string", Description: "Optional Namespace (ignored for cluster scoped resources). If not provided, the configured namespace is used"},
++					"name":       {Type: "string", Description: "Name of one object to label (or use labelSelector)"},
++					"labelSelector": {
++						Type:        "string",
++						Description: "Instead of name: label every object of this kind in the namespace whose labels match (e.g. 'app=web'). Must not be empty.",
++						Pattern:     REGEX_LABELSELECTOR_VALID_CHARS,
++					},
++					"labels": {
++						Type:                 "object",
++						Description:          "Labels to set, as key: value; a null value removes the label (e.g. {\"tier\": \"cache\", \"stale\": null})",
++						AdditionalProperties: &jsonschema.Schema{Types: []string{"string", "null"}},
++					},
++					"dry_run": {Type: "boolean", Description: "With labelSelector: list the objects that would be labelled and change nothing."},
++				},
++				Required: []string{"apiVersion", "kind", "labels"},
++			},
++			Annotations: api.ToolAnnotations{
++				Title: "Resources: Label",
++				// changing or removing labels can move objects out of selectors (Services, ReplicaSets)
++				DestructiveHint: ptr.To(true),
++				IdempotentHint:  ptr.To(true),
++				OpenWorldHint:   ptr.To(true),
++			},
++		}, RBAC: api.RBACBounded(api.RBACRequirement{
++			Verbs: []string{"list", "patch"},
++			Target: api.RBACTarget{GVK: &api.RBACGVKTarget{
++				APIVersionArgument: "apiVersion",
++				KindArgument:       "kind",
++			}},
++			Namespace: &api.RBACNamespace{Argument: "namespace"},
++		}), Handler: resourcesLabel},
+ 		{Tool: api.Tool{
+ 			Name:        "resources_delete",
+ 			Description: "Delete a Kubernetes resource in the current cluster by providing its apiVersion, kind, optionally the namespace, and its name\n" + commonApiVersion,
+@@ -246,8 +286,17 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
+ 						Type:        "string",
+ 						Description: "Optional precondition: the metadata.resourceVersion you read. The delete is refused if the object changed since.",
+ 					},
++					"labelSelector": {
++						Type:        "string",
++						Description: "Instead of name: act on every object of this kind in the namespace whose labels match (e.g. 'cache=stale'). Must not be empty. Each object is handled on its own (best effort) and gets its own result line.",
++						Pattern:     REGEX_LABELSELECTOR_VALID_CHARS,
++					},
++					"dry_run": {
++						Type:        "boolean",
++						Description: "With labelSelector: list the objects that would be affected and change nothing.",
++					},
+ 				},
+-				Required: []string{"apiVersion", "kind", "name"},
++				Required: []string{"apiVersion", "kind"},
+ 			},
+ 			Annotations: api.ToolAnnotations{
+ 				Title:           "Resources: Delete",
+@@ -256,6 +305,13 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
+ 				OpenWorldHint:   ptr.To(true),
+ 			},
+ 		}, RBAC: api.RBACBounded(api.RBACRequirement{
++			Verbs: []string{"list"},
++			Target: api.RBACTarget{GVK: &api.RBACGVKTarget{
++				APIVersionArgument: "apiVersion",
++				KindArgument:       "kind",
++			}},
++			Namespace: &api.RBACNamespace{Argument: "namespace"},
++		}, api.RBACRequirement{
+ 			Verbs: []string{"delete"},
+ 			Target: api.RBACTarget{GVK: &api.RBACGVKTarget{
+ 				APIVersionArgument: "apiVersion",
+@@ -291,8 +347,17 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
+ 						Description: "Optional scale to update the resources scale to. If not provided, will return the current scale of the resource, and not update it",
+ 					},
+ 					"output": outputProperty,
++					"labelSelector": {
++						Type:        "string",
++						Description: "Instead of name: act on every object of this kind in the namespace whose labels match (e.g. 'cache=stale'). Must not be empty. Each object is handled on its own (best effort) and gets its own result line.",
++						Pattern:     REGEX_LABELSELECTOR_VALID_CHARS,
++					},
++					"dry_run": {
++						Type:        "boolean",
++						Description: "With labelSelector: list the objects that would be affected and change nothing.",
++					},
+ 				},
+-				Required: []string{"apiVersion", "kind", "name"},
++				Required: []string{"apiVersion", "kind"},
+ 			},
+ 			Annotations: api.ToolAnnotations{
+ 				Title:           "Resources: Scale",
+@@ -301,6 +366,13 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
+ 				OpenWorldHint:   ptr.To(true),
+ 			},
+ 		}, RBAC: api.RBACBounded(api.RBACRequirement{
++			Verbs: []string{"list"},
++			Target: api.RBACTarget{GVK: &api.RBACGVKTarget{
++				APIVersionArgument: "apiVersion",
++				KindArgument:       "kind",
++			}},
++			Namespace: &api.RBACNamespace{Argument: "namespace"},
++		}, api.RBACRequirement{
+ 			Verbs: []string{"get", "update"},
+ 			Target: api.RBACTarget{GVK: &api.RBACGVKTarget{
+ 				APIVersionArgument: "apiVersion",
+@@ -586,9 +658,22 @@ func resourcesDelete(params api.ToolHandlerParams) (*api.ToolCallResult, error)
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to delete resource, %s", err)), nil
+ 	}
+ 	name := params.GetArguments()["name"]
++	if selector, ok := params.GetArguments()["labelSelector"].(string); ok && name == nil {
++		ns, _ := namespace.(string)
++		p := api.WrapParams(params)
++		opts := kubernetes.DeleteOptions{PropagationPolicy: metav1.DeletionPropagation(p.OptionalString("propagationPolicy", string(metav1.DeletePropagationBackground)))}
++		dryRun := p.OptionalBool("dry_run", false)
++		if err := p.Err(); err != nil {
++			return api.NewToolCallResult("", fmt.Errorf("failed to delete resources: %w", err)), nil
++		}
++		return resourcesDeleteBySelector(params, gvk, ns, selector, opts, dryRun)
++	}
+ 	if name == nil {
+ 		return api.NewToolCallResult("", errors.New("failed to delete resource, missing argument name")), nil
+ 	}
++	if _, ok := params.GetArguments()["labelSelector"]; ok {
++		return api.NewToolCallResult("", errors.New("failed to delete resource, pass either name or labelSelector, not both")), nil
++	}
+ 
+ 	ns, ok := namespace.(string)
+ 	if !ok {
+@@ -670,9 +755,29 @@ func resourcesScale(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 	}
+ 
+ 	name := params.GetArguments()["name"]
++	if selector, ok := params.GetArguments()["labelSelector"].(string); ok && name == nil {
++		ns, _ := namespace.(string)
++		scaleVal, hasScale := params.GetArguments()["scale"]
++		if !hasScale {
++			return api.NewToolCallResult("", errors.New("failed to scale resources: scale is required with labelSelector")), nil
++		}
++		desired, err := parseScaleValue(scaleVal)
++		if err != nil {
++			return api.NewToolCallResult("", err), nil
++		}
++		p := api.WrapParams(params)
++		dryRun := p.OptionalBool("dry_run", false)
++		if err := p.Err(); err != nil {
++			return api.NewToolCallResult("", fmt.Errorf("failed to scale resources: %w", err)), nil
++		}
++		return resourcesScaleBySelector(params, gvk, ns, selector, desired, dryRun)
++	}
+ 	if name == nil {
+ 		return api.NewToolCallResult("", errors.New("failed to get/update resource scale, missing argument name")), nil
+ 	}
++	if _, ok := params.GetArguments()["labelSelector"]; ok {
++		return api.NewToolCallResult("", errors.New("failed to get/update resource scale, pass either name or labelSelector, not both")), nil
++	}
+ 
+ 	ns, ok := namespace.(string)
+ 	if !ok {

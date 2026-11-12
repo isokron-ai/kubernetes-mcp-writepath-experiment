@@ -1,0 +1,4 @@
+# Build outputs and work copies of harness/build/build.sh
+build/out/
+build/work/
+build/src/

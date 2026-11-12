@@ -1,0 +1,435 @@
+From ccbd7f625c4f5d501a5be0ab6fe282a2c5abc3ba Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 11:50:33 -0700
+Subject: [PATCH 1/2] fix(kubevirt): build vm_create's VirtualMachine as data,
+ not templated YAML
+
+vm_create rendered its arguments into vm.yaml.tmpl with text/template,
+without escaping, and passed the text to the multi-document apply,
+which splits on `---` and force-applies every document. The workload
+argument is passed through unchanged when it looks like an image
+reference and ends up on the template's last line, so a workload value
+containing a newline, a separator and a manifest made vm_create apply
+that extra object too, of any kind and in any namespace the server
+identity may write, and still answer "VirtualMachine created
+successfully". Operators who expose only vm_create (enabled_tools) or
+only the kubevirt toolset do not expect it to write anything but
+VirtualMachines; its RBAC metadata declares only VirtualMachines.
+
+The VirtualMachine is now built as an unstructured object (buildVM),
+field by field, with the same content the template produced, and
+applied through a new Core.ResourcesApplyObject that applies exactly
+one object and parses no manifest text. Every argument is a scalar
+field value and cannot add fields or documents. vm.yaml.tmpl is
+removed. In addition, a workload containing whitespace or control
+characters is refused up front, since neither an OS name nor an image
+reference can contain them.
+
+TestRenderVMYaml asserted substrings of the rendered template; it is
+replaced by TestBuildVM, which asserts the object's fields (including
+that manifest text in an argument stays a field value). An MCP test
+checks that a workload carrying a second document is refused and
+creates nothing.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ pkg/kubernetes/resources.go                  | 11 +++
+ pkg/mcp/kubevirt_test.go                     | 20 +++++
+ pkg/toolsets/kubevirt/vm/create/tool.go      | 91 +++++++++++++++-----
+ pkg/toolsets/kubevirt/vm/create/tool_test.go | 86 ++++++++++--------
+ pkg/toolsets/kubevirt/vm/create/vm.yaml.tmpl | 65 --------------
+ 5 files changed, 148 insertions(+), 125 deletions(-)
+ delete mode 100644 pkg/toolsets/kubevirt/vm/create/vm.yaml.tmpl
+
+diff --git a/pkg/kubernetes/resources.go b/pkg/kubernetes/resources.go
+index f96b5da..ab6f37c 100644
+--- a/pkg/kubernetes/resources.go
++++ b/pkg/kubernetes/resources.go
+@@ -74,6 +74,17 @@ func (c *Core) ResourcesCreateOrUpdate(ctx context.Context, resource string) ([]
+ 	return c.resourcesCreateOrUpdate(ctx, parsedResources)
+ }
+ 
++// ResourcesApplyObject server-side applies one object that the caller built as
++// data, without parsing any manifest text, so that tool arguments placed in its
++// fields cannot add documents to the apply.
++func (c *Core) ResourcesApplyObject(ctx context.Context, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
++	applied, err := c.resourcesCreateOrUpdate(ctx, []*unstructured.Unstructured{obj})
++	if err != nil {
++		return nil, err
++	}
++	return applied[0], nil
++}
++
+ // ParseManifests splits a YAML or JSON stream into Kubernetes objects the way
+ // kubectl's YAML reader does: a document separator is a line starting with
+ // "---", optionally followed by spaces and a comment, and documents that hold
+diff --git a/pkg/mcp/kubevirt_test.go b/pkg/mcp/kubevirt_test.go
+index ea744b4..cd3ab67 100644
+--- a/pkg/mcp/kubevirt_test.go
++++ b/pkg/mcp/kubevirt_test.go
+@@ -15,6 +15,7 @@ import (
+ 	"github.com/stretchr/testify/suite"
+ 	"golang.org/x/sync/errgroup"
+ 	corev1 "k8s.io/api/core/v1"
++	apierrors "k8s.io/apimachinery/pkg/api/errors"
+ 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+ 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+ 	"k8s.io/apimachinery/pkg/runtime/schema"
+@@ -151,6 +152,25 @@ func (s *KubevirtSuite) TestCreate() {
+ 		s.True(toolResult.IsError, "a wrongly typed networks argument must not create a VM without networks")
+ 		s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "networks must be an array")
+ 	})
++	s.Run("vm_create with manifest text in workload", func() {
++		toolResult, err := s.CallTool("vm_create", map[string]interface{}{
++			"name":      "test-vm-workload-text",
++			"namespace": "default",
++			"workload":  "quay.io/containerdisks/fedora:latest\n---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: not-a-vm\n  namespace: default\n",
++		})
++		s.Require().NoError(err)
++		s.Run("returns an error", func() {
++			s.True(toolResult.IsError)
++			s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "invalid workload parameter")
++		})
++		s.Run("creates nothing", func() {
++			_, cmErr := kubernetes.NewForConfigOrDie(test.EnvTestRestConfig()).CoreV1().ConfigMaps("default").Get(s.T().Context(), "not-a-vm", metav1.GetOptions{})
++			s.Truef(apierrors.IsNotFound(cmErr), "no object other than the VirtualMachine may be created")
++			_, vmErr := dynamic.NewForConfigOrDie(test.EnvTestRestConfig()).Resource(schema.GroupVersionResource{Group: "kubevirt.io", Version: "v1", Resource: "virtualmachines"}).
++				Namespace("default").Get(s.T().Context(), "test-vm-workload-text", metav1.GetOptions{})
++			s.True(apierrors.IsNotFound(vmErr))
++		})
++	})
+ 	s.Run("vm_create(workload=ubuntu, instancetype=u1.medium) with instancetype", func() {
+ 		toolResult, err := s.CallTool("vm_create", map[string]interface{}{
+ 			"name":         "test-vm-2",
+diff --git a/pkg/toolsets/kubevirt/vm/create/tool.go b/pkg/toolsets/kubevirt/vm/create/tool.go
+index 9525dfd..02c6f82 100644
+--- a/pkg/toolsets/kubevirt/vm/create/tool.go
++++ b/pkg/toolsets/kubevirt/vm/create/tool.go
+@@ -1,10 +1,8 @@
+ package create
+ 
+ import (
+-	_ "embed"
+ 	"fmt"
+ 	"strings"
+-	"text/template"
+ 
+ 	"github.com/containers/kubernetes-mcp-server/pkg/api"
+ 	"github.com/containers/kubernetes-mcp-server/pkg/kubernetes"
+@@ -18,9 +16,6 @@ import (
+ 	"k8s.io/utils/ptr"
+ )
+ 
+-//go:embed vm.yaml.tmpl
+-var vmYamlTemplate string
+-
+ func Tools(inspector api.ClusterInspector) []api.ServerTool {
+ 	return []api.ServerTool{
+ 		{
+@@ -212,20 +207,19 @@ func create(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 	// Resolve instancetype from DataSource defaults or size/performance hints
+ 	instancetypeInfo := kubevirt.ResolveInstancetype(instancetypes, createParams.Instancetype, createParams.Size, createParams.Performance, matchedDataSource)
+ 
+-	// Build template parameters from resolved resources
++	// Build the VM parameters from resolved resources
+ 	templateParams := buildTemplateParams(createParams, matchedDataSource, instancetypeInfo, preferenceInfo)
+ 
+-	// Render the VM YAML
+-	vmYaml, err := renderVMYaml(templateParams)
+-	if err != nil {
+-		return api.NewToolCallResult("", err), nil
+-	}
++	// Build the VirtualMachine as data and apply exactly that one object: no argument
++	// is ever parsed as manifest text.
++	vm := buildVM(templateParams)
+ 
+ 	// Create the VM in the cluster
+-	resources, err := kubernetes.NewCore(params).ResourcesCreateOrUpdate(params, vmYaml)
++	created, err := kubernetes.NewCore(params).ResourcesApplyObject(params, vm)
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to create VirtualMachine: %w", err)), nil
+ 	}
++	resources := []*unstructured.Unstructured{created}
+ 
+ 	// Format the output
+ 	marshalledYaml, err := output.MarshalYaml(resources)
+@@ -266,6 +260,10 @@ func parseCreateParameters(params api.ToolHandlerParams) (*createParameters, err
+ 		return nil, err
+ 	}
+ 
++	if strings.IndexFunc(workload, func(r rune) bool { return r <= ' ' || r == 0x7f }) >= 0 {
++		return nil, fmt.Errorf("invalid workload parameter: an OS name or container image reference cannot contain whitespace or control characters")
++	}
++
+ 	rawNetworks, err := optionalArray(params, "networks")
+ 	if err != nil {
+ 		return nil, fmt.Errorf("invalid networks parameter: %w", err)
+@@ -398,19 +396,66 @@ func buildTemplateParams(createParams *createParameters, matchedDataSource *kube
+ 	return params
+ }
+ 
+-// renderVMYaml renders the VM YAML from template
+-func renderVMYaml(templateParams vmParams) (string, error) {
+-	tmpl, err := template.New("vm").Parse(vmYamlTemplate)
+-	if err != nil {
+-		return "", fmt.Errorf("failed to parse template: %w", err)
++// buildVM builds the VirtualMachine object from its parameters. Every argument
++// ends up as a scalar field value, so no argument can add fields or documents.
++func buildVM(p vmParams) *unstructured.Unstructured {
++	rootDisk := p.Name + "-rootdisk"
++	spec := map[string]any{
++		"runStrategy": p.RunStrategy,
+ 	}
+-
+-	var result strings.Builder
+-	if err := tmpl.Execute(&result, templateParams); err != nil {
+-		return "", fmt.Errorf("failed to render template: %w", err)
++	if p.Instancetype != "" {
++		spec["instancetype"] = map[string]any{"name": p.Instancetype, "kind": p.InstancetypeKind}
+ 	}
+-
+-	return result.String(), nil
++	if p.Preference != "" {
++		spec["preference"] = map[string]any{"name": p.Preference, "kind": p.PreferenceKind}
++	}
++	if p.UseDataSource {
++		spec["dataVolumeTemplates"] = []any{map[string]any{
++			"metadata": map[string]any{"name": rootDisk},
++			"spec": map[string]any{
++				"sourceRef": map[string]any{
++					"kind":      "DataSource",
++					"name":      p.DataSourceName,
++					"namespace": p.DataSourceNamespace,
++				},
++				"storage": map[string]any{
++					"resources": map[string]any{"requests": map[string]any{"storage": p.Storage}},
++				},
++			},
++		}}
++	}
++	devices := map[string]any{
++		"disks": []any{map[string]any{"name": rootDisk}},
++	}
++	domain := map[string]any{"devices": devices}
++	if p.Instancetype == "" {
++		domain["memory"] = map[string]any{"guest": "2Gi"}
++	}
++	templateSpec := map[string]any{"domain": domain}
++	if len(p.Networks) > 0 {
++		interfaces := make([]any, 0, len(p.Networks))
++		networks := make([]any, 0, len(p.Networks))
++		for _, n := range p.Networks {
++			interfaces = append(interfaces, map[string]any{"name": n.Name, "bridge": map[string]any{}})
++			networks = append(networks, map[string]any{"name": n.Name, "multus": map[string]any{"networkName": n.NetworkName}})
++		}
++		devices["interfaces"] = interfaces
++		templateSpec["networks"] = networks
++	}
++	volume := map[string]any{"name": rootDisk}
++	if p.UseDataSource {
++		volume["dataVolume"] = map[string]any{"name": rootDisk}
++	} else {
++		volume["containerDisk"] = map[string]any{"image": p.ContainerDisk}
++	}
++	templateSpec["volumes"] = []any{volume}
++	spec["template"] = map[string]any{"spec": templateSpec}
++	return &unstructured.Unstructured{Object: map[string]any{
++		"apiVersion": "kubevirt.io/v1",
++		"kind":       "VirtualMachine",
++		"metadata":   map[string]any{"name": p.Name, "namespace": p.Namespace},
++		"spec":       spec,
++	}}
+ }
+ 
+ func normalizePerformance(performance string) string {
+diff --git a/pkg/toolsets/kubevirt/vm/create/tool_test.go b/pkg/toolsets/kubevirt/vm/create/tool_test.go
+index 4861326..f39e9da 100644
+--- a/pkg/toolsets/kubevirt/vm/create/tool_test.go
++++ b/pkg/toolsets/kubevirt/vm/create/tool_test.go
+@@ -1,6 +1,7 @@
+ package create
+ 
+ import (
++	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+ 	"testing"
+ 
+ 	"github.com/stretchr/testify/suite"
+@@ -110,45 +111,47 @@ func (s *CreateToolSuite) TestParseNetworks() {
+ 	})
+ }
+ 
+-func (s *CreateToolSuite) TestRenderVMYaml() {
++func (s *CreateToolSuite) TestBuildVM() {
++	field := func(obj *unstructured.Unstructured, path ...string) any {
++		v, _, _ := unstructured.NestedFieldNoCopy(obj.Object, path...)
++		return v
++	}
+ 	s.Run("VM without networks", func() {
+-		params := vmParams{
++		vm := buildVM(vmParams{
+ 			Namespace:     "test-ns",
+ 			Name:          "test-vm",
+ 			ContainerDisk: "quay.io/containerdisks/fedora:latest",
+ 			RunStrategy:   "Halted",
+-		}
+-		yaml, err := renderVMYaml(params)
+-		s.NoError(err)
+-		s.Contains(yaml, "name: test-vm")
+-		s.Contains(yaml, "namespace: test-ns")
+-		s.Contains(yaml, "runStrategy: Halted")
+-		s.Contains(yaml, "image: quay.io/containerdisks/fedora:latest")
+-		s.NotContains(yaml, "networks:")
+-		s.NotContains(yaml, "interfaces:")
++		})
++		s.Equal("VirtualMachine", vm.GetKind())
++		s.Equal("kubevirt.io/v1", vm.GetAPIVersion())
++		s.Equal("test-vm", vm.GetName())
++		s.Equal("test-ns", vm.GetNamespace())
++		s.Equal("Halted", field(vm, "spec", "runStrategy"))
++		s.Equal([]any{map[string]any{"name": "test-vm-rootdisk", "containerDisk": map[string]any{"image": "quay.io/containerdisks/fedora:latest"}}},
++			field(vm, "spec", "template", "spec", "volumes"))
++		s.Equal("2Gi", field(vm, "spec", "template", "spec", "domain", "memory", "guest"))
++		s.Nil(field(vm, "spec", "template", "spec", "networks"))
++		s.Nil(field(vm, "spec", "template", "spec", "domain", "devices", "interfaces"))
+ 	})
+ 
+-	s.Run("VM with single network", func() {
+-		params := vmParams{
+-			Namespace:     "test-ns",
+-			Name:          "test-vm",
+-			ContainerDisk: "quay.io/containerdisks/fedora:latest",
+-			RunStrategy:   "Halted",
+-			Networks: []NetworkConfig{
+-				{Name: "vlan-network", NetworkName: "vlan-network"},
+-			},
+-		}
+-		yaml, err := renderVMYaml(params)
+-		s.NoError(err)
+-		s.Contains(yaml, "networks:")
+-		s.Contains(yaml, "- name: vlan-network")
+-		s.Contains(yaml, "networkName: vlan-network")
+-		s.Contains(yaml, "interfaces:")
+-		s.Contains(yaml, "bridge: {}")
++	s.Run("VM with instancetype, preference and DataSource", func() {
++		vm := buildVM(vmParams{
++			Namespace: "test-ns", Name: "test-vm", RunStrategy: "Always", Storage: "50Gi",
++			Instancetype: "u1.medium", InstancetypeKind: "VirtualMachineClusterInstancetype",
++			Preference: "fedora", PreferenceKind: "VirtualMachineClusterPreference",
++			UseDataSource: true, DataSourceName: "fedora", DataSourceNamespace: "os-images",
++		})
++		s.Equal(map[string]any{"name": "u1.medium", "kind": "VirtualMachineClusterInstancetype"}, field(vm, "spec", "instancetype"))
++		s.Equal(map[string]any{"name": "fedora", "kind": "VirtualMachineClusterPreference"}, field(vm, "spec", "preference"))
++		s.Nil(field(vm, "spec", "template", "spec", "domain", "memory"), "an instancetype sets the memory")
++		s.Equal("50Gi", field(vm, "spec", "dataVolumeTemplates").([]any)[0].(map[string]any)["spec"].(map[string]any)["storage"].(map[string]any)["resources"].(map[string]any)["requests"].(map[string]any)["storage"])
++		s.Equal(map[string]any{"name": "test-vm-rootdisk", "dataVolume": map[string]any{"name": "test-vm-rootdisk"}},
++			field(vm, "spec", "template", "spec", "volumes").([]any)[0])
+ 	})
+ 
+-	s.Run("VM with multiple networks", func() {
+-		params := vmParams{
++	s.Run("VM with networks", func() {
++		vm := buildVM(vmParams{
+ 			Namespace:     "test-ns",
+ 			Name:          "test-vm",
+ 			ContainerDisk: "quay.io/containerdisks/fedora:latest",
+@@ -157,13 +160,22 @@ func (s *CreateToolSuite) TestRenderVMYaml() {
+ 				{Name: "vlan100", NetworkName: "vlan-network"},
+ 				{Name: "storage", NetworkName: "storage-network"},
+ 			},
+-		}
+-		yaml, err := renderVMYaml(params)
+-		s.NoError(err)
+-		s.Contains(yaml, "- name: vlan100")
+-		s.Contains(yaml, "networkName: vlan-network")
+-		s.Contains(yaml, "- name: storage")
+-		s.Contains(yaml, "networkName: storage-network")
++		})
++		s.Equal([]any{
++			map[string]any{"name": "vlan100", "bridge": map[string]any{}},
++			map[string]any{"name": "storage", "bridge": map[string]any{}},
++		}, field(vm, "spec", "template", "spec", "domain", "devices", "interfaces"))
++		s.Equal([]any{
++			map[string]any{"name": "vlan100", "multus": map[string]any{"networkName": "vlan-network"}},
++			map[string]any{"name": "storage", "multus": map[string]any{"networkName": "storage-network"}},
++		}, field(vm, "spec", "template", "spec", "networks"))
++	})
++
++	s.Run("argument text stays a field value", func() {
++		value := "quay.io/x:1\n---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: extra\n"
++		vm := buildVM(vmParams{Namespace: "test-ns", Name: "test-vm", ContainerDisk: value, RunStrategy: "Halted"})
++		s.Equal(value, field(vm, "spec", "template", "spec", "volumes").([]any)[0].(map[string]any)["containerDisk"].(map[string]any)["image"])
++		s.Equal("VirtualMachine", vm.GetKind())
+ 	})
+ }
+ 
+diff --git a/pkg/toolsets/kubevirt/vm/create/vm.yaml.tmpl b/pkg/toolsets/kubevirt/vm/create/vm.yaml.tmpl
+deleted file mode 100644
+index 0ae66a6..0000000
+--- a/pkg/toolsets/kubevirt/vm/create/vm.yaml.tmpl
++++ /dev/null
+@@ -1,65 +0,0 @@
+-apiVersion: kubevirt.io/v1
+-kind: VirtualMachine
+-metadata:
+-  name: {{.Name}}
+-  namespace: {{.Namespace}}
+-spec:
+-  runStrategy: {{.RunStrategy}}
+-{{- if .Instancetype}}
+-  instancetype:
+-    name: {{.Instancetype}}
+-    kind: {{.InstancetypeKind}}
+-{{- end}}
+-{{- if .Preference}}
+-  preference:
+-    name: {{.Preference}}
+-    kind: {{.PreferenceKind}}
+-{{- end}}
+-{{- if .UseDataSource}}
+-  dataVolumeTemplates:
+-  - metadata:
+-      name: {{.Name}}-rootdisk
+-    spec:
+-      sourceRef:
+-        kind: DataSource
+-        name: {{.DataSourceName}}
+-        namespace: {{.DataSourceNamespace}}
+-      storage:
+-        resources:
+-          requests:
+-            storage: {{.Storage}}
+-{{- end}}
+-  template:
+-    spec:
+-      domain:
+-        devices:
+-          disks:
+-          - name: {{.Name}}-rootdisk
+-{{- if .Networks}}
+-          interfaces:
+-{{- range .Networks}}
+-          - name: {{.Name}}
+-            bridge: {}
+-{{- end}}
+-{{- end}}
+-{{- if not .Instancetype}}
+-        memory:
+-          guest: 2Gi
+-{{- end}}
+-{{- if .Networks}}
+-      networks:
+-{{- range .Networks}}
+-      - name: {{.Name}}
+-        multus:
+-          networkName: {{.NetworkName}}
+-{{- end}}
+-{{- end}}
+-      volumes:
+-      - name: {{.Name}}-rootdisk
+-{{- if .UseDataSource}}
+-        dataVolume:
+-          name: {{.Name}}-rootdisk
+-{{- else}}
+-        containerDisk:
+-          image: {{.ContainerDisk}}
+-{{- end}}

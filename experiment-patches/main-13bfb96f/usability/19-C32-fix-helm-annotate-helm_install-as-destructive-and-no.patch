@@ -1,0 +1,82 @@
+From 764eae41f1cd99dffb9cf8f913731fd26620c121 Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 12:55:44 -0700
+Subject: [PATCH 19/19] fix(helm): annotate helm_install as destructive and not
+ idempotent (C32)
+
+Confirmation rules and clients decide on destructiveHint: rules match on
+it, and disable_destructive hides tools that carry it. helm_install was
+annotated non-destructive, yet a chart's hooks can delete or replace
+resources (helm.sh/hook-delete-policy), and with rollback_on_failure the
+tool uninstalls what it created. It is now destructiveHint true, and
+idempotentHint false: a second install with the same name fails. It is
+therefore hidden under disable_destructive, like
+resources_create_or_update. pods_run's annotation is corrected by the
+fixed build.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ pkg/mcp/helm_test.go                      | 15 +++++++++++++++
+ pkg/mcp/testdata/toolsets-helm-tools.json |  2 +-
+ pkg/toolsets/helm/helm.go                 |  9 ++++++---
+ 3 files changed, 22 insertions(+), 4 deletions(-)
+
+diff --git a/pkg/mcp/helm_test.go b/pkg/mcp/helm_test.go
+index b91104f..a16f755 100644
+--- a/pkg/mcp/helm_test.go
++++ b/pkg/mcp/helm_test.go
+@@ -165,6 +165,21 @@ func (s *HelmSuite) TestHelmInstallWaitOptions() {
+ 	})
+ }
+ 
++func (s *HelmSuite) TestHelmInstallIsAnnotatedDestructive() {
++	s.InitMcpClient()
++	tools, err := s.ListTools()
++	s.Require().NoError(err)
++	for _, tool := range tools.Tools {
++		if tool.Name == "helm_install" {
++			s.Require().NotNil(tool.Annotations.DestructiveHint)
++			s.True(*tool.Annotations.DestructiveHint)
++			s.False(tool.Annotations.IdempotentHint)
++			return
++		}
++	}
++	s.Fail("helm_install not listed")
++}
++
+ func (s *HelmSuite) TestHelmInstallDenied() {
+ 	configtest.OverlayTOML(s.T(), &s.Cfg, `
+ 		denied_resources = [ { version = "v1", kind = "Secret" } ]
+diff --git a/pkg/mcp/testdata/toolsets-helm-tools.json b/pkg/mcp/testdata/toolsets-helm-tools.json
+index 707af30..372a4ef 100644
+--- a/pkg/mcp/testdata/toolsets-helm-tools.json
++++ b/pkg/mcp/testdata/toolsets-helm-tools.json
+@@ -9,7 +9,7 @@
+       }
+     },
+     "annotations": {
+-      "destructiveHint": false,
++      "destructiveHint": true,
+       "idempotentHint": false,
+       "openWorldHint": true,
+       "readOnlyHint": false,
+diff --git a/pkg/toolsets/helm/helm.go b/pkg/toolsets/helm/helm.go
+index 2555ede..9950a80 100644
+--- a/pkg/toolsets/helm/helm.go
++++ b/pkg/toolsets/helm/helm.go
+@@ -55,9 +55,12 @@ func initHelm() []api.ServerTool {
+ 				Required: []string{"chart"},
+ 			},
+ 			Annotations: api.ToolAnnotations{
+-				Title:           "Helm: Install",
+-				DestructiveHint: ptr.To(false),
+-				IdempotentHint:  nil, // TODO: consider replacing implementation with equivalent to: helm upgrade --install
++				Title: "Helm: Install",
++				// A chart's hooks can delete or replace resources (helm.sh/hook-delete-policy), and
++				// rollback_on_failure uninstalls what the install created. Clients and confirmation
++				// rules that rely on this hint must see it.
++				DestructiveHint: ptr.To(true),
++				IdempotentHint:  ptr.To(false), // a second install with the same name fails; TODO: consider helm upgrade --install
+ 				OpenWorldHint:   ptr.To(true),
+ 			},
+ 		}, RBAC: api.RBACUnbounded("Permissions depend on resources contained in the referenced Helm chart"), Handler: helmInstall},

@@ -1,0 +1,968 @@
+From 723a08bbb9806d03e238be1d1a447096a5155204 Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 12:22:25 -0700
+Subject: [PATCH 07/19] feat(core): list several kinds in one call; multi-get
+ and field projection (C9, C27)
+
+Reading many things cost one call each. Job 10 of the native session
+swept 33 kinds one call at a time to find what was left in a namespace
+(3,599 tokens, 5 errors from guessed kinds); job 15 read 8 Deployments
+in full (about 490 tokens each) to compare two fields.
+
+resources_list:
+- `kinds: [{apiVersion, kind}, ...]` lists several kinds in one call and
+  returns the names per kind; a kind that fails (unknown, forbidden) is
+  reported inline with its error and does not fail the call (C9);
+- `all_kinds: true` lists every namespaced kind the cluster serves (by
+  discovery, preferred versions, list verb), except Events, in the
+  given namespace, and shows only kinds that have objects (C9);
+- `fields: [paths]` returns, per object, its name and only the requested
+  fields (C27).
+
+resources_get:
+- `names: [...]` reads several objects of one kind in one call, each
+  object's error inline (C27);
+- `fields: [paths]`, with name or names, returns only those fields.
+
+Paths are dotted, with [N] for one list element and [*] for every
+element ("spec.template.spec.containers[*].image"); a missing path gives
+null. apiVersion and kind are no longer required by resources_list's
+schema, nor name by resources_get's; the handlers still refuse a call
+that gives neither form, with the old messages. Single-kind lists and
+single gets without fields are unchanged.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ pkg/kubernetes/batch.go                       |  31 ++++
+ pkg/mcp/resources_multi_test.go               | 107 ++++++++++++
+ pkg/mcp/testdata/toolsets-core-tools.json     |  43 ++++-
+ .../toolsets-full-tools-multicluster.json     |  43 ++++-
+ .../toolsets-full-tools-openshift.json        |  43 ++++-
+ pkg/mcp/testdata/toolsets-full-tools.json     |  43 ++++-
+ pkg/toolsets/core/multi.go                    | 163 ++++++++++++++++++
+ pkg/toolsets/core/projection.go               |  77 +++++++++
+ pkg/toolsets/core/projection_test.go          |  37 ++++
+ pkg/toolsets/core/resources.go                |  72 +++++++-
+ 10 files changed, 650 insertions(+), 9 deletions(-)
+ create mode 100644 pkg/mcp/resources_multi_test.go
+ create mode 100644 pkg/toolsets/core/multi.go
+ create mode 100644 pkg/toolsets/core/projection.go
+ create mode 100644 pkg/toolsets/core/projection_test.go
+
+diff --git a/pkg/kubernetes/batch.go b/pkg/kubernetes/batch.go
+index b0d9982..0c5b719 100644
+--- a/pkg/kubernetes/batch.go
++++ b/pkg/kubernetes/batch.go
+@@ -4,6 +4,7 @@ import (
+ 	"context"
+ 	"encoding/json"
+ 	"fmt"
++	"slices"
+ 	"strings"
+ 
+ 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+@@ -11,6 +12,7 @@ import (
+ 	"k8s.io/apimachinery/pkg/labels"
+ 	"k8s.io/apimachinery/pkg/runtime/schema"
+ 	"k8s.io/apimachinery/pkg/types"
++	"k8s.io/client-go/discovery"
+ 
+ 	"github.com/containers/kubernetes-mcp-server/pkg/version"
+ )
+@@ -57,3 +59,32 @@ func (c *Core) ResourcesLabel(ctx context.Context, gvk *schema.GroupVersionKind,
+ 	}
+ 	return c.DynamicClient().Resource(*gvr).Namespace(namespace).Patch(ctx, name, types.MergePatchType, body, metav1.PatchOptions{FieldManager: version.BinaryName})
+ }
++
++// ListableKind is one kind ResourcesListableNamespacedKinds returns.
++type ListableKind struct {
++	APIVersion string
++	Kind       string
++}
++
++// ResourcesListableNamespacedKinds returns every namespaced kind (server-preferred
++// version) that supports list, except Events, which are noise for "what is in this
++// namespace" and have their own tool.
++func (c *Core) ResourcesListableNamespacedKinds(ctx context.Context) ([]ListableKind, error) {
++	lists, err := discovery.ServerPreferredNamespacedResources(c.RawDiscoveryClient())
++	var kinds []ListableKind
++	for _, list := range lists {
++		for _, r := range list.APIResources {
++			if strings.Contains(r.Name, "/") || r.Kind == "Event" || !slices.Contains(r.Verbs, "list") {
++				continue
++			}
++			kinds = append(kinds, ListableKind{APIVersion: list.GroupVersion, Kind: r.Kind})
++		}
++	}
++	slices.SortFunc(kinds, func(a, b ListableKind) int {
++		return strings.Compare(a.APIVersion+"/"+a.Kind, b.APIVersion+"/"+b.Kind)
++	})
++	if len(kinds) == 0 && err != nil {
++		return nil, err
++	}
++	return kinds, nil
++}
+diff --git a/pkg/mcp/resources_multi_test.go b/pkg/mcp/resources_multi_test.go
+new file mode 100644
+index 0000000..89b6b15
+--- /dev/null
++++ b/pkg/mcp/resources_multi_test.go
+@@ -0,0 +1,107 @@
++package mcp
++
++import (
++	"testing"
++
++	"github.com/modelcontextprotocol/go-sdk/mcp"
++	"github.com/stretchr/testify/suite"
++	appsv1 "k8s.io/api/apps/v1"
++	corev1 "k8s.io/api/core/v1"
++	"k8s.io/apimachinery/pkg/api/resource"
++	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
++	"k8s.io/client-go/kubernetes"
++	"k8s.io/utils/ptr"
++
++	"github.com/containers/kubernetes-mcp-server/internal/test"
++)
++
++type ResourcesMultiSuite struct {
++	BaseMcpSuite
++	namespace string
++}
++
++func (s *ResourcesMultiSuite) SetupTest() {
++	s.BaseMcpSuite.SetupTest()
++	client := kubernetes.NewForConfigOrDie(test.EnvTestRestConfig())
++	ns, err := client.CoreV1().Namespaces().Create(s.T().Context(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{GenerateName: "multi-"}}, metav1.CreateOptions{})
++	s.Require().NoError(err)
++	s.namespace = ns.Name
++	for _, d := range []struct{ name, image, memory string }{{"orders", "nginx:2", "128Mi"}, {"search", "nginx:1", "256Mi"}, {"cart", "nginx:1", "128Mi"}} {
++		_, err = client.AppsV1().Deployments(s.namespace).Create(s.T().Context(), &appsv1.Deployment{
++			ObjectMeta: metav1.ObjectMeta{Name: d.name},
++			Spec: appsv1.DeploymentSpec{
++				Replicas: ptr.To(int32(1)),
++				Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": d.name}},
++				Template: corev1.PodTemplateSpec{
++					ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": d.name}},
++					Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: d.image, Resources: corev1.ResourceRequirements{
++						Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse(d.memory)},
++					}}}},
++				},
++			},
++		}, metav1.CreateOptions{})
++		s.Require().NoError(err)
++	}
++	_, err = client.CoreV1().ConfigMaps(s.namespace).Create(s.T().Context(), &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "settings"}}, metav1.CreateOptions{})
++	s.Require().NoError(err)
++	s.InitMcpClient()
++}
++
++func (s *ResourcesMultiSuite) TestGetManyWithFields() {
++	result, err := s.CallTool("resources_get", map[string]interface{}{
++		"apiVersion": "apps/v1", "kind": "Deployment", "namespace": s.namespace,
++		"names":  []interface{}{"orders", "search", "missing"},
++		"fields": []interface{}{"spec.template.spec.containers[*].image", "spec.template.spec.containers[0].resources.limits.memory"},
++	})
++	s.Require().NoError(err)
++	s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++	text := result.Content[0].(*mcp.TextContent).Text
++	s.Contains(text, "- fields:\n    spec.template.spec.containers[*].image:\n    - nginx:2")
++	s.Contains(text, "spec.template.spec.containers[0].resources.limits.memory: 256Mi")
++	s.Contains(text, "name: missing")
++	s.Contains(text, "not found")
++	s.NotContains(text, "managedFields")
++}
++
++func (s *ResourcesMultiSuite) TestListSeveralKinds() {
++	result, err := s.CallTool("resources_list", map[string]interface{}{
++		"namespace": s.namespace,
++		"kinds": []interface{}{
++			map[string]interface{}{"apiVersion": "apps/v1", "kind": "Deployment"},
++			map[string]interface{}{"apiVersion": "v1", "kind": "ConfigMap"},
++			map[string]interface{}{"apiVersion": "example.com/v1", "kind": "Nope"},
++		},
++	})
++	s.Require().NoError(err)
++	s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++	text := result.Content[0].(*mcp.TextContent).Text
++	s.Contains(text, "kind: Deployment")
++	s.Contains(text, "- cart")
++	s.Contains(text, "- settings")
++	s.Contains(text, "kind: Nope", "an unknown kind is reported inline")
++}
++
++func (s *ResourcesMultiSuite) TestListAllKinds() {
++	result, err := s.CallTool("resources_list", map[string]interface{}{"namespace": s.namespace, "all_kinds": true})
++	s.Require().NoError(err)
++	s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++	text := result.Content[0].(*mcp.TextContent).Text
++	s.Contains(text, "kind: Deployment")
++	s.Contains(text, "kind: ConfigMap")
++	s.NotContains(text, "kind: Secret\n", "kinds with no objects are left out")
++}
++
++func (s *ResourcesMultiSuite) TestListWithFields() {
++	result, err := s.CallTool("resources_list", map[string]interface{}{
++		"apiVersion": "apps/v1", "kind": "Deployment", "namespace": s.namespace, "fields": []interface{}{"spec.replicas"},
++	})
++	s.Require().NoError(err)
++	s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++	text := result.Content[0].(*mcp.TextContent).Text
++	s.Contains(text, "# 3 Deployment objects, fields spec.replicas")
++	s.Contains(text, "spec.replicas: 1")
++}
++
++func TestResourcesMulti(t *testing.T) {
++	suite.Run(t, new(ResourcesMultiSuite))
++}
+diff --git a/pkg/mcp/testdata/toolsets-core-tools.json b/pkg/mcp/testdata/toolsets-core-tools.json
+index 60e6890..1798de9 100644
+--- a/pkg/mcp/testdata/toolsets-core-tools.json
++++ b/pkg/mcp/testdata/toolsets-core-tools.json
+@@ -1200,6 +1200,13 @@
+           "description": "apiVersion of the resource (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)",
+           "type": "string"
+         },
++        "fields": {
++          "description": "Return only these fields, as dotted paths; [N] picks a list element and [*] every element, e.g. [\"spec.template.spec.containers[*].resources.limits\"].",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
+         "kind": {
+           "description": "kind of the resource (examples of valid kind are: Pod, Service, Deployment, Ingress)",
+           "type": "string"
+@@ -1208,6 +1215,13 @@
+           "description": "Name of the resource",
+           "type": "string"
+         },
++        "names": {
++          "description": "Instead of name: read several objects of this kind in one call; each object's error is reported inline.",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
+         "namespace": {
+           "description": "Optional Namespace to retrieve the namespaced resource from (ignored in case of cluster scoped resources). If not provided, will get resource from configured namespace",
+           "type": "string"
+@@ -1215,8 +1229,7 @@
+       },
+       "required": [
+         "apiVersion",
+-        "kind",
+-        "name"
++        "kind"
+       ],
+       "type": "object"
+     },
+@@ -1338,6 +1351,10 @@
+     "description": "List Kubernetes resources and objects in the current cluster by providing their apiVersion and kind and optionally the namespace and label selector. Use limit and continue to retrieve a large list one page at a time.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
+     "inputSchema": {
+       "properties": {
++        "all_kinds": {
++          "description": "Instead of apiVersion and kind: list every namespaced kind the cluster serves (except Events) in the given namespace, names only, leaving out kinds with no objects. Use it to see everything in a namespace, e.g. before or after a clean-up.",
++          "type": "boolean"
++        },
+         "apiVersion": {
+           "description": "apiVersion of the resources (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)",
+           "type": "string"
+@@ -1351,10 +1368,32 @@
+           "pattern": "^[.\\-A-Za-z0-9]+([=!,]{1,2}[./\\-A-Za-z0-9]+)+$",
+           "type": "string"
+         },
++        "fields": {
++          "description": "Return only these fields of each object, as dotted paths; [N] picks a list element and [*] every element, e.g. [\"spec.replicas\", \"spec.template.spec.containers[*].image\"].",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
+         "kind": {
+           "description": "kind of the resources (examples of valid kind are: Pod, Service, Deployment, Ingress)",
+           "type": "string"
+         },
++        "kinds": {
++          "description": "Instead of apiVersion and kind: list several kinds in one call, e.g. [{\"apiVersion\":\"apps/v1\",\"kind\":\"Deployment\"},{\"apiVersion\":\"v1\",\"kind\":\"Service\"}]. Returns the names per kind, with each kind's error inline.",
++          "items": {
++            "properties": {
++              "apiVersion": {
++                "type": "string"
++              },
++              "kind": {
++                "type": "string"
++              }
++            },
++            "type": "object"
++          },
++          "type": "array"
++        },
+         "labelSelector": {
+           "description": "Optional Kubernetes label selector (e.g. 'app=myapp,env=prod' or 'app in (myapp,yourapp)'), use this option when you want to filter the resources by label",
+           "pattern": "^([/_.\\-A-Za-z0-9=, ()!])+$",
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+index 607afc2..976809b 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+@@ -1321,6 +1321,13 @@
+           "description": "Optional parameter selecting which context to run the tool in. Defaults to fake-context if not set",
+           "type": "string"
+         },
++        "fields": {
++          "description": "Return only these fields, as dotted paths; [N] picks a list element and [*] every element, e.g. [\"spec.template.spec.containers[*].resources.limits\"].",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
+         "kind": {
+           "description": "kind of the resource (examples of valid kind are: Pod, Service, Deployment, Ingress)",
+           "type": "string"
+@@ -1329,6 +1336,13 @@
+           "description": "Name of the resource",
+           "type": "string"
+         },
++        "names": {
++          "description": "Instead of name: read several objects of this kind in one call; each object's error is reported inline.",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
+         "namespace": {
+           "description": "Optional Namespace to retrieve the namespaced resource from (ignored in case of cluster scoped resources). If not provided, will get resource from configured namespace",
+           "type": "string"
+@@ -1336,8 +1350,7 @@
+       },
+       "required": [
+         "apiVersion",
+-        "kind",
+-        "name"
++        "kind"
+       ],
+       "type": "object"
+     },
+@@ -1463,6 +1476,10 @@
+     "description": "List Kubernetes resources and objects in the current cluster by providing their apiVersion and kind and optionally the namespace and label selector. Use limit and continue to retrieve a large list one page at a time.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
+     "inputSchema": {
+       "properties": {
++        "all_kinds": {
++          "description": "Instead of apiVersion and kind: list every namespaced kind the cluster serves (except Events) in the given namespace, names only, leaving out kinds with no objects. Use it to see everything in a namespace, e.g. before or after a clean-up.",
++          "type": "boolean"
++        },
+         "apiVersion": {
+           "description": "apiVersion of the resources (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)",
+           "type": "string"
+@@ -1480,10 +1497,32 @@
+           "pattern": "^[.\\-A-Za-z0-9]+([=!,]{1,2}[./\\-A-Za-z0-9]+)+$",
+           "type": "string"
+         },
++        "fields": {
++          "description": "Return only these fields of each object, as dotted paths; [N] picks a list element and [*] every element, e.g. [\"spec.replicas\", \"spec.template.spec.containers[*].image\"].",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
+         "kind": {
+           "description": "kind of the resources (examples of valid kind are: Pod, Service, Deployment, Ingress)",
+           "type": "string"
+         },
++        "kinds": {
++          "description": "Instead of apiVersion and kind: list several kinds in one call, e.g. [{\"apiVersion\":\"apps/v1\",\"kind\":\"Deployment\"},{\"apiVersion\":\"v1\",\"kind\":\"Service\"}]. Returns the names per kind, with each kind's error inline.",
++          "items": {
++            "properties": {
++              "apiVersion": {
++                "type": "string"
++              },
++              "kind": {
++                "type": "string"
++              }
++            },
++            "type": "object"
++          },
++          "type": "array"
++        },
+         "labelSelector": {
+           "description": "Optional Kubernetes label selector (e.g. 'app=myapp,env=prod' or 'app in (myapp,yourapp)'), use this option when you want to filter the resources by label",
+           "pattern": "^([/_.\\-A-Za-z0-9=, ()!])+$",
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-openshift.json b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+index 14910ed..0552fe3 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-openshift.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+@@ -1227,6 +1227,13 @@
+           "description": "apiVersion of the resource (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)",
+           "type": "string"
+         },
++        "fields": {
++          "description": "Return only these fields, as dotted paths; [N] picks a list element and [*] every element, e.g. [\"spec.template.spec.containers[*].resources.limits\"].",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
+         "kind": {
+           "description": "kind of the resource (examples of valid kind are: Pod, Service, Deployment, Ingress)",
+           "type": "string"
+@@ -1235,6 +1242,13 @@
+           "description": "Name of the resource",
+           "type": "string"
+         },
++        "names": {
++          "description": "Instead of name: read several objects of this kind in one call; each object's error is reported inline.",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
+         "namespace": {
+           "description": "Optional Namespace to retrieve the namespaced resource from (ignored in case of cluster scoped resources). If not provided, will get resource from configured namespace",
+           "type": "string"
+@@ -1242,8 +1256,7 @@
+       },
+       "required": [
+         "apiVersion",
+-        "kind",
+-        "name"
++        "kind"
+       ],
+       "type": "object"
+     },
+@@ -1365,6 +1378,10 @@
+     "description": "List Kubernetes resources and objects in the current cluster by providing their apiVersion and kind and optionally the namespace and label selector. Use limit and continue to retrieve a large list one page at a time.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
+     "inputSchema": {
+       "properties": {
++        "all_kinds": {
++          "description": "Instead of apiVersion and kind: list every namespaced kind the cluster serves (except Events) in the given namespace, names only, leaving out kinds with no objects. Use it to see everything in a namespace, e.g. before or after a clean-up.",
++          "type": "boolean"
++        },
+         "apiVersion": {
+           "description": "apiVersion of the resources (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)",
+           "type": "string"
+@@ -1378,10 +1395,32 @@
+           "pattern": "^[.\\-A-Za-z0-9]+([=!,]{1,2}[./\\-A-Za-z0-9]+)+$",
+           "type": "string"
+         },
++        "fields": {
++          "description": "Return only these fields of each object, as dotted paths; [N] picks a list element and [*] every element, e.g. [\"spec.replicas\", \"spec.template.spec.containers[*].image\"].",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
+         "kind": {
+           "description": "kind of the resources (examples of valid kind are: Pod, Service, Deployment, Ingress)",
+           "type": "string"
+         },
++        "kinds": {
++          "description": "Instead of apiVersion and kind: list several kinds in one call, e.g. [{\"apiVersion\":\"apps/v1\",\"kind\":\"Deployment\"},{\"apiVersion\":\"v1\",\"kind\":\"Service\"}]. Returns the names per kind, with each kind's error inline.",
++          "items": {
++            "properties": {
++              "apiVersion": {
++                "type": "string"
++              },
++              "kind": {
++                "type": "string"
++              }
++            },
++            "type": "object"
++          },
++          "type": "array"
++        },
+         "labelSelector": {
+           "description": "Optional Kubernetes label selector (e.g. 'app=myapp,env=prod' or 'app in (myapp,yourapp)'), use this option when you want to filter the resources by label",
+           "pattern": "^([/_.\\-A-Za-z0-9=, ()!])+$",
+diff --git a/pkg/mcp/testdata/toolsets-full-tools.json b/pkg/mcp/testdata/toolsets-full-tools.json
+index 14910ed..0552fe3 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools.json
++++ b/pkg/mcp/testdata/toolsets-full-tools.json
+@@ -1227,6 +1227,13 @@
+           "description": "apiVersion of the resource (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)",
+           "type": "string"
+         },
++        "fields": {
++          "description": "Return only these fields, as dotted paths; [N] picks a list element and [*] every element, e.g. [\"spec.template.spec.containers[*].resources.limits\"].",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
+         "kind": {
+           "description": "kind of the resource (examples of valid kind are: Pod, Service, Deployment, Ingress)",
+           "type": "string"
+@@ -1235,6 +1242,13 @@
+           "description": "Name of the resource",
+           "type": "string"
+         },
++        "names": {
++          "description": "Instead of name: read several objects of this kind in one call; each object's error is reported inline.",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
+         "namespace": {
+           "description": "Optional Namespace to retrieve the namespaced resource from (ignored in case of cluster scoped resources). If not provided, will get resource from configured namespace",
+           "type": "string"
+@@ -1242,8 +1256,7 @@
+       },
+       "required": [
+         "apiVersion",
+-        "kind",
+-        "name"
++        "kind"
+       ],
+       "type": "object"
+     },
+@@ -1365,6 +1378,10 @@
+     "description": "List Kubernetes resources and objects in the current cluster by providing their apiVersion and kind and optionally the namespace and label selector. Use limit and continue to retrieve a large list one page at a time.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
+     "inputSchema": {
+       "properties": {
++        "all_kinds": {
++          "description": "Instead of apiVersion and kind: list every namespaced kind the cluster serves (except Events) in the given namespace, names only, leaving out kinds with no objects. Use it to see everything in a namespace, e.g. before or after a clean-up.",
++          "type": "boolean"
++        },
+         "apiVersion": {
+           "description": "apiVersion of the resources (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)",
+           "type": "string"
+@@ -1378,10 +1395,32 @@
+           "pattern": "^[.\\-A-Za-z0-9]+([=!,]{1,2}[./\\-A-Za-z0-9]+)+$",
+           "type": "string"
+         },
++        "fields": {
++          "description": "Return only these fields of each object, as dotted paths; [N] picks a list element and [*] every element, e.g. [\"spec.replicas\", \"spec.template.spec.containers[*].image\"].",
++          "items": {
++            "type": "string"
++          },
++          "type": "array"
++        },
+         "kind": {
+           "description": "kind of the resources (examples of valid kind are: Pod, Service, Deployment, Ingress)",
+           "type": "string"
+         },
++        "kinds": {
++          "description": "Instead of apiVersion and kind: list several kinds in one call, e.g. [{\"apiVersion\":\"apps/v1\",\"kind\":\"Deployment\"},{\"apiVersion\":\"v1\",\"kind\":\"Service\"}]. Returns the names per kind, with each kind's error inline.",
++          "items": {
++            "properties": {
++              "apiVersion": {
++                "type": "string"
++              },
++              "kind": {
++                "type": "string"
++              }
++            },
++            "type": "object"
++          },
++          "type": "array"
++        },
+         "labelSelector": {
+           "description": "Optional Kubernetes label selector (e.g. 'app=myapp,env=prod' or 'app in (myapp,yourapp)'), use this option when you want to filter the resources by label",
+           "pattern": "^([/_.\\-A-Za-z0-9=, ()!])+$",
+diff --git a/pkg/toolsets/core/multi.go b/pkg/toolsets/core/multi.go
+new file mode 100644
+index 0000000..6cb74c5
+--- /dev/null
++++ b/pkg/toolsets/core/multi.go
+@@ -0,0 +1,163 @@
++package core
++
++import (
++	"fmt"
++	"strings"
++
++	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
++	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
++	"k8s.io/apimachinery/pkg/runtime/schema"
++
++	"github.com/containers/kubernetes-mcp-server/pkg/api"
++	"github.com/containers/kubernetes-mcp-server/pkg/kubernetes"
++	"github.com/containers/kubernetes-mcp-server/pkg/output"
++)
++
++// kindList is one kind's part of a multi-kind list: the names found, or the error.
++type kindList struct {
++	APIVersion string   `json:"apiVersion"`
++	Kind       string   `json:"kind"`
++	Count      int      `json:"count"`
++	Names      []string `json:"names,omitempty"`
++	Error      string   `json:"error,omitempty"`
++}
++
++// resourcesListKinds lists several kinds (or every listable namespaced kind) in one
++// call, with names only and each kind's error inline instead of failing the call.
++func resourcesListKinds(params api.ToolHandlerParams, ns string, allKinds bool) (*api.ToolCallResult, error) {
++	core := kubernetes.NewCore(params)
++	var kinds []kubernetes.ListableKind
++	if allKinds {
++		if ns == "" {
++			return api.NewToolCallResult("", fmt.Errorf("failed to list resources: all_kinds needs a namespace")), nil
++		}
++		found, err := core.ResourcesListableNamespacedKinds(params.Context)
++		if err != nil {
++			return api.NewToolCallResult("", fmt.Errorf("failed to list resources: %w", err)), nil
++		}
++		kinds = found
++	} else {
++		raw, ok := params.GetArguments()["kinds"].([]any)
++		if !ok || len(raw) == 0 {
++			return api.NewToolCallResult("", fmt.Errorf("failed to list resources: kinds must be a non-empty array of {apiVersion, kind}")), nil
++		}
++		for i, item := range raw {
++			m, _ := item.(map[string]any)
++			apiVersion, _ := m["apiVersion"].(string)
++			kind, _ := m["kind"].(string)
++			if apiVersion == "" || kind == "" {
++				return api.NewToolCallResult("", fmt.Errorf("failed to list resources: kinds[%d] needs apiVersion and kind", i)), nil
++			}
++			kinds = append(kinds, kubernetes.ListableKind{APIVersion: apiVersion, Kind: kind})
++		}
++	}
++	selector, _ := params.GetArguments()["labelSelector"].(string)
++	results := make([]kindList, 0, len(kinds))
++	total := 0
++	for _, k := range kinds {
++		entry := kindList{APIVersion: k.APIVersion, Kind: k.Kind, Names: []string{}}
++		gv, err := schema.ParseGroupVersion(k.APIVersion)
++		if err != nil {
++			entry.Error = "invalid apiVersion"
++			results = append(results, entry)
++			continue
++		}
++		gvk := gv.WithKind(k.Kind)
++		ret, err := core.ResourcesList(params, &gvk, ns, api.ListOptions{ListOptions: listOptions(selector)})
++		if err != nil {
++			entry.Error = ListErr(err).Error()
++			results = append(results, entry)
++			continue
++		}
++		if list, ok := ret.(*unstructured.UnstructuredList); ok {
++			for _, item := range list.Items {
++				name := item.GetName()
++				if ns == "" && item.GetNamespace() != "" {
++					name = item.GetNamespace() + "/" + name
++				}
++				entry.Names = append(entry.Names, name)
++			}
++		}
++		entry.Count = len(entry.Names)
++		total += entry.Count
++		if allKinds && entry.Count == 0 {
++			continue // with all_kinds only kinds that have objects are shown
++		}
++		results = append(results, entry)
++	}
++	where := "all namespaces"
++	if ns != "" {
++		where = "namespace " + ns
++	}
++	header := fmt.Sprintf("# %d objects of %d kinds in %s (names only; use resources_get for an object)\n", total, len(kinds), where)
++	if allKinds {
++		header = fmt.Sprintf("# %d objects in %s across %d listable kinds; kinds with no objects are left out (Events too: use events_list)\n", total, where, len(kinds))
++	}
++	body, err := output.MarshalYaml(results)
++	if err != nil {
++		return api.NewToolCallResult("", err), nil
++	}
++	return api.NewToolCallResultFull(header+body, map[string]any{"kinds": results}, nil), nil
++}
++
++// resourcesGetMany reads several named objects of one kind in one call, each whole or
++// projected to the requested fields, with each object's error inline.
++func resourcesGetMany(params api.ToolHandlerParams, gvk *schema.GroupVersionKind, ns string, names, fields []string) (*api.ToolCallResult, error) {
++	core := kubernetes.NewCore(params)
++	items := make([]map[string]any, 0, len(names))
++	for _, name := range names {
++		obj, err := core.ResourcesGet(params, gvk, ns, name)
++		if err != nil {
++			items = append(items, map[string]any{"name": name, "error": err.Error()})
++			continue
++		}
++		obj.SetManagedFields(nil)
++		if len(fields) > 0 {
++			items = append(items, map[string]any{"name": name, "fields": projectFields(obj.Object, fields)})
++		} else {
++			items = append(items, obj.Object)
++		}
++	}
++	body, err := output.MarshalYaml(items)
++	if err != nil {
++		return api.NewToolCallResult("", err), nil
++	}
++	header := fmt.Sprintf("# %d %s objects\n", len(names), gvk.Kind)
++	if len(fields) > 0 {
++		header = fmt.Sprintf("# %d %s objects, fields %s\n", len(names), gvk.Kind, strings.Join(fields, ", "))
++	}
++	return api.NewToolCallResultFull(header+body, map[string]any{"items": items}, nil), nil
++}
++
++// resourcesListFields lists one kind and returns, for each object, its name and the
++// requested fields only.
++func resourcesListFields(params api.ToolHandlerParams, gvk *schema.GroupVersionKind, ns string, options api.ListOptions, fields []string) (*api.ToolCallResult, error) {
++	options.AsTable = false
++	ret, err := kubernetes.NewCore(params).ResourcesList(params, gvk, ns, options)
++	if err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to list resources: %w", ListErr(err))), nil
++	}
++	rows := []map[string]any{}
++	if list, ok := ret.(*unstructured.UnstructuredList); ok {
++		for _, item := range list.Items {
++			row := map[string]any{"name": item.GetName()}
++			if ns == "" && item.GetNamespace() != "" {
++				row["namespace"] = item.GetNamespace()
++			}
++			for k, v := range projectFields(item.Object, fields) {
++				row[k] = v
++			}
++			rows = append(rows, row)
++		}
++	}
++	body, err := output.MarshalYaml(rows)
++	if err != nil {
++		return api.NewToolCallResult("", err), nil
++	}
++	text, structured := WithListPage(fmt.Sprintf("# %d %s objects, fields %s\n", len(rows), gvk.Kind, strings.Join(fields, ", "))+body, map[string]any{"items": rows}, ret)
++	return api.NewToolCallResultFull(text, structured, nil), nil
++}
++
++func listOptions(labelSelector string) metav1.ListOptions {
++	return metav1.ListOptions{LabelSelector: labelSelector}
++}
+diff --git a/pkg/toolsets/core/projection.go b/pkg/toolsets/core/projection.go
+new file mode 100644
+index 0000000..09adc73
+--- /dev/null
++++ b/pkg/toolsets/core/projection.go
+@@ -0,0 +1,77 @@
++package core
++
++import (
++	"fmt"
++	"strconv"
++	"strings"
++)
++
++// projectFields returns the value at each dotted path of obj. A path segment may end
++// in [N] (one list element) or [*] (every element); for example
++// "spec.template.spec.containers[*].image". A path that does not exist gives nil.
++func projectFields(obj map[string]any, paths []string) map[string]any {
++	out := make(map[string]any, len(paths))
++	for _, path := range paths {
++		out[path] = projectPath(obj, strings.Split(path, "."))
++	}
++	return out
++}
++
++func projectPath(value any, segments []string) any {
++	if len(segments) == 0 {
++		return value
++	}
++	segment := segments[0]
++	key, index := segment, ""
++	if i := strings.Index(segment, "["); i >= 0 && strings.HasSuffix(segment, "]") {
++		key, index = segment[:i], segment[i+1:len(segment)-1]
++	}
++	m, ok := value.(map[string]any)
++	if !ok {
++		return nil
++	}
++	next, ok := m[key]
++	if !ok {
++		return nil
++	}
++	if index == "" {
++		return projectPath(next, segments[1:])
++	}
++	list, ok := next.([]any)
++	if !ok {
++		return nil
++	}
++	if index == "*" {
++		values := make([]any, 0, len(list))
++		for _, item := range list {
++			values = append(values, projectPath(item, segments[1:]))
++		}
++		return values
++	}
++	i, err := strconv.Atoi(index)
++	if err != nil || i < 0 || i >= len(list) {
++		return nil
++	}
++	return projectPath(list[i], segments[1:])
++}
++
++// stringList reads an optional array-of-strings argument.
++func stringList(args map[string]any, key string) ([]string, error) {
++	raw, ok := args[key]
++	if !ok || raw == nil {
++		return nil, nil
++	}
++	list, ok := raw.([]any)
++	if !ok {
++		return nil, fmt.Errorf("%s must be an array of strings", key)
++	}
++	out := make([]string, 0, len(list))
++	for _, item := range list {
++		s, ok := item.(string)
++		if !ok || strings.TrimSpace(s) == "" {
++			return nil, fmt.Errorf("%s must be an array of non-empty strings", key)
++		}
++		out = append(out, s)
++	}
++	return out, nil
++}
+diff --git a/pkg/toolsets/core/projection_test.go b/pkg/toolsets/core/projection_test.go
+new file mode 100644
+index 0000000..2188fc5
+--- /dev/null
++++ b/pkg/toolsets/core/projection_test.go
+@@ -0,0 +1,37 @@
++package core
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/suite"
++)
++
++type ProjectionSuite struct {
++	suite.Suite
++}
++
++func (s *ProjectionSuite) TestProjectFields() {
++	obj := map[string]any{
++		"metadata": map[string]any{"name": "web"},
++		"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{
++			map[string]any{"name": "app", "image": "nginx:1", "resources": map[string]any{"limits": map[string]any{"memory": "128Mi"}}},
++			map[string]any{"name": "sidecar", "image": "busybox"},
++		}}}},
++	}
++	got := projectFields(obj, []string{
++		"metadata.name",
++		"spec.template.spec.containers[*].image",
++		"spec.template.spec.containers[0].resources.limits.memory",
++		"spec.template.spec.containers[5].image",
++		"status.replicas",
++	})
++	s.Equal("web", got["metadata.name"])
++	s.Equal([]any{"nginx:1", "busybox"}, got["spec.template.spec.containers[*].image"])
++	s.Equal("128Mi", got["spec.template.spec.containers[0].resources.limits.memory"])
++	s.Nil(got["spec.template.spec.containers[5].image"])
++	s.Nil(got["status.replicas"])
++}
++
++func TestProjection(t *testing.T) {
++	suite.Run(t, new(ProjectionSuite))
++}
+diff --git a/pkg/toolsets/core/resources.go b/pkg/toolsets/core/resources.go
+index 5198ffa..67d600a 100644
+--- a/pkg/toolsets/core/resources.go
++++ b/pkg/toolsets/core/resources.go
+@@ -64,6 +64,27 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
+ 						Description: "Optional Kubernetes field selector to filter resources by field values (e.g. 'status.phase=Running', 'metadata.name=myresource'). Supported fields vary by resource type. For Pods: metadata.name, metadata.namespace, spec.nodeName, spec.restartPolicy, spec.schedulerName, spec.serviceAccountName, status.phase (Pending/Running/Succeeded/Failed/Unknown), status.podIP, status.nominatedNodeName. See https://kubernetes.io/docs/concepts/overview/working-with-objects/field-selectors/",
+ 						Pattern:     REGEX_FIELDSELECTOR,
+ 					},
++					"kinds": {
++						Type:        "array",
++						Description: "Instead of apiVersion and kind: list several kinds in one call, e.g. [{\"apiVersion\":\"apps/v1\",\"kind\":\"Deployment\"},{\"apiVersion\":\"v1\",\"kind\":\"Service\"}]. Returns the names per kind, with each kind's error inline.",
++						Items: &jsonschema.Schema{
++							Type: "object",
++							Properties: map[string]*jsonschema.Schema{
++								"apiVersion": {Type: "string"},
++								"kind":       {Type: "string"},
++							},
++							Required: []string{},
++						},
++					},
++					"all_kinds": {
++						Type:        "boolean",
++						Description: "Instead of apiVersion and kind: list every namespaced kind the cluster serves (except Events) in the given namespace, names only, leaving out kinds with no objects. Use it to see everything in a namespace, e.g. before or after a clean-up.",
++					},
++					"fields": {
++						Type:        "array",
++						Items:       &jsonschema.Schema{Type: "string"},
++						Description: "Return only these fields of each object, as dotted paths; [N] picks a list element and [*] every element, e.g. [\"spec.replicas\", \"spec.template.spec.containers[*].image\"].",
++					},
+ 				}),
+ 				Required: []string{"apiVersion", "kind"},
+ 			},
+@@ -104,8 +125,18 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
+ 						Type:        "string",
+ 						Description: "Name of the resource",
+ 					},
++					"names": {
++						Type:        "array",
++						Items:       &jsonschema.Schema{Type: "string"},
++						Description: "Instead of name: read several objects of this kind in one call; each object's error is reported inline.",
++					},
++					"fields": {
++						Type:        "array",
++						Items:       &jsonschema.Schema{Type: "string"},
++						Description: "Return only these fields, as dotted paths; [N] picks a list element and [*] every element, e.g. [\"spec.template.spec.containers[*].resources.limits\"].",
++					},
+ 				},
+-				Required: []string{"apiVersion", "kind", "name"},
++				Required: []string{"apiVersion", "kind"},
+ 			},
+ 			Annotations: api.ToolAnnotations{
+ 				Title:           "Resources: Get",
+@@ -474,6 +505,18 @@ func resourcesList(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 	if namespace == nil {
+ 		namespace = ""
+ 	}
++	allKinds, _ := params.GetArguments()["all_kinds"].(bool)
++	if _, hasKinds := params.GetArguments()["kinds"]; hasKinds || allKinds {
++		ns, ok := namespace.(string)
++		if !ok {
++			return api.NewToolCallResult("", fmt.Errorf("namespace is not a string")), nil
++		}
++		return resourcesListKinds(params, ns, allKinds)
++	}
++	fields, err := stringList(params.GetArguments(), "fields")
++	if err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to list resources: %w", err)), nil
++	}
+ 	labelSelector := params.GetArguments()["labelSelector"]
+ 	resourceListOptions := api.ListOptions{
+ 		AsTable: params.ListOutput.AsTable(),
+@@ -507,6 +550,9 @@ func resourcesList(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 		return api.NewToolCallResult("", fmt.Errorf("namespace is not a string")), nil
+ 	}
+ 
++	if len(fields) > 0 {
++		return resourcesListFields(params, gvk, ns, resourceListOptions, fields)
++	}
+ 	ret, err := kubernetes.NewCore(params).ResourcesList(params, gvk, ns, resourceListOptions)
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to list resources: %w", ListErr(err))), nil
+@@ -536,6 +582,30 @@ func resourcesGet(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to get resource, %s", err)), nil
+ 	}
+ 	name := params.GetArguments()["name"]
++	names, err := stringList(params.GetArguments(), "names")
++	if err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to get resources: %w", err)), nil
++	}
++	fields, err := stringList(params.GetArguments(), "fields")
++	if err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to get resources: %w", err)), nil
++	}
++	if len(names) > 0 || (name != nil && len(fields) > 0) {
++		ns, ok := namespace.(string)
++		if !ok {
++			return api.NewToolCallResult("", fmt.Errorf("namespace is not a string")), nil
++		}
++		if len(names) == 0 {
++			n, ok := name.(string)
++			if !ok {
++				return api.NewToolCallResult("", fmt.Errorf("name is not a string")), nil
++			}
++			names = []string{n}
++		} else if name != nil {
++			return api.NewToolCallResult("", errors.New("failed to get resources, pass either name or names, not both")), nil
++		}
++		return resourcesGetMany(params, gvk, ns, names, fields)
++	}
+ 	if name == nil {
+ 		return api.NewToolCallResult("", errors.New("failed to get resource, missing argument name")), nil
+ 	}

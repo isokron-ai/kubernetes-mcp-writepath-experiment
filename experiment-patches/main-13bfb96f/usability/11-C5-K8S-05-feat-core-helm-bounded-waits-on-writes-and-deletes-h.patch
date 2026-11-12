@@ -1,0 +1,982 @@
+From b7d28791dfbb8ddc1a0a0686522ef5023a656fe3 Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 12:35:36 -0700
+Subject: [PATCH 11/19] feat(core,helm): bounded waits on writes and deletes;
+ helm_install wait, timeout and rollback_on_failure (C5, K8S-05)
+
+Agents polled after every write: 7 polls (3,548 tokens) on the first
+native series, 6 calls on the second, to see a rollout finish, a Pod
+become Ready or an object disappear. helm_install had the opposite
+problem: a hard-coded 5-minute wait with no rollback (K8S-05), longer
+than common client timeouts, so the outcome was lost and the failed
+release blocked its name.
+
+Core tools: resources_create_or_update, resources_delete,
+resources_scale and resources_rollout take `wait` (seconds, 0-120,
+default 0). After the write the server re-reads the object(s) until:
+- a Deployment, StatefulSet or DaemonSet rollout is complete
+  (observed generation, updated and available replicas);
+- a Pod is Ready (or Succeeded), a Job Complete (or Failed);
+- any other kind exists; a deleted object is gone.
+The result gets one "# wait:" line per object saying whether that state
+was reached, with the last state seen. A timeout is reported, not
+treated as a failure of the write, which did happen. The maximum (120 s)
+stays under common client timeouts; the description says to stay under
+the client's own.
+
+helm_install and helm_uninstall take `wait` (default true, as before)
+and `timeout` (a Go duration, default 5m), the names upstream #1334
+proposes as toolset-level options; helm_install also takes
+`rollback_on_failure` (Helm's --atomic): on failure or timeout the
+release is uninstalled again, so nothing is left behind and the name is
+free. When an install fails and the release record exists, the error
+now names the release's state ("failed") and what to do before reusing
+the name. Defaults are unchanged.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ pkg/helm/helm.go                              |  53 ++++++++-
+ pkg/kubernetes/wait.go                        | 105 ++++++++++++++++++
+ pkg/mcp/helm_test.go                          |  44 ++++++++
+ pkg/mcp/resources_test.go                     |  28 +++++
+ .../helm-chart-never-ready/Chart.yaml         |   4 +
+ .../templates/deployment.yaml                 |  17 +++
+ pkg/mcp/testdata/toolsets-core-tools.json     |  24 ++++
+ .../toolsets-full-tools-multicluster.json     |  24 ++++
+ .../toolsets-full-tools-openshift.json        |  24 ++++
+ pkg/mcp/testdata/toolsets-full-tools.json     |  24 ++++
+ pkg/mcp/testdata/toolsets-helm-tools.json     |  20 ++++
+ pkg/toolsets/core/resources.go                |  26 ++++-
+ pkg/toolsets/core/rollout.go                  |  23 +++-
+ pkg/toolsets/core/wait.go                     |  70 ++++++++++++
+ pkg/toolsets/helm/helm.go                     |  54 ++++++++-
+ 15 files changed, 530 insertions(+), 10 deletions(-)
+ create mode 100644 pkg/kubernetes/wait.go
+ create mode 100644 pkg/mcp/testdata/helm-chart-never-ready/Chart.yaml
+ create mode 100644 pkg/mcp/testdata/helm-chart-never-ready/templates/deployment.yaml
+ create mode 100644 pkg/toolsets/core/wait.go
+
+diff --git a/pkg/helm/helm.go b/pkg/helm/helm.go
+index 15811e1..bab3fd8 100644
+--- a/pkg/helm/helm.go
++++ b/pkg/helm/helm.go
+@@ -37,7 +37,25 @@ func NewHelm(kubernetes Kubernetes, config *Config) *Helm {
+ 	return &Helm{kubernetes: kubernetes, config: config}
+ }
+ 
++// InstallOptions are helm_install's waiting and failure options. The zero value is the
++// historical behaviour: wait 5 minutes for every object to be ready, no rollback.
++// Upstream #1334 proposes the same wait and timeout as toolset-level defaults.
++type InstallOptions struct {
++	// NoWait returns as soon as the objects are created (helm install without --wait).
++	NoWait bool
++	// Timeout of the wait and of hooks; 0 means 5 minutes.
++	Timeout time.Duration
++	// RollbackOnFailure uninstalls the release if the install fails or times out
++	// (helm install --atomic), so the name is free for a retry. It implies waiting.
++	RollbackOnFailure bool
++}
++
+ func (h *Helm) Install(ctx context.Context, chart string, values map[string]interface{}, name string, namespace string) (string, error) {
++	return h.InstallWithOptions(ctx, chart, values, name, namespace, InstallOptions{})
++}
++
++// InstallWithOptions installs a chart with explicit wait, timeout and rollback options.
++func (h *Helm) InstallWithOptions(ctx context.Context, chart string, values map[string]interface{}, name string, namespace string, opts InstallOptions) (string, error) {
+ 	if err := validateChartReference(chart, h.config); err != nil {
+ 		return "", err
+ 	}
+@@ -53,8 +71,12 @@ func (h *Helm) Install(ctx context.Context, chart string, values map[string]inte
+ 		install.ReleaseName = name
+ 	}
+ 	install.Namespace = h.kubernetes.NamespaceOrDefault(namespace)
+-	install.Wait = true
++	install.Wait = !opts.NoWait || opts.RollbackOnFailure
+ 	install.Timeout = 5 * time.Minute
++	if opts.Timeout > 0 {
++		install.Timeout = opts.Timeout
++	}
++	install.Atomic = opts.RollbackOnFailure
+ 	install.DryRun = false
+ 
+ 	chartRequested, err := install.LocateChart(chart, cli.New())
+@@ -68,7 +90,7 @@ func (h *Helm) Install(ctx context.Context, chart string, values map[string]inte
+ 
+ 	installedRelease, err := install.RunWithContext(ctx, chartLoaded, values)
+ 	if err != nil {
+-		return "", err
++		return "", h.withReleaseState(ctx, install.ReleaseName, install.Namespace, err)
+ 	}
+ 	ret, err := yaml.Marshal(simplify(installedRelease))
+ 	if err != nil {
+@@ -116,7 +138,29 @@ func helmPageNote(limit, offset, count int) string {
+ 	return ""
+ }
+ 
++// withReleaseState adds the state the failed operation left the release in, so the
++// caller knows whether the name is still taken and what to do next.
++func (h *Helm) withReleaseState(ctx context.Context, name, namespace string, err error) error {
++	if name == "" {
++		return err
++	}
++	cfg, cfgErr := h.newAction(ctx, namespace, false)
++	if cfgErr != nil {
++		return err
++	}
++	rel, statusErr := action.NewStatus(cfg).Run(name)
++	if statusErr != nil || rel == nil || rel.Info == nil {
++		return err
++	}
++	return fmt.Errorf("%w (release %s is now in state %q in namespace %s; its objects may remain: helm_uninstall it before reusing the name, or retry with rollback_on_failure)", err, name, rel.Info.Status.String(), namespace)
++}
++
+ func (h *Helm) Uninstall(ctx context.Context, name string, namespace string) (string, error) {
++	return h.UninstallWithOptions(ctx, name, namespace, InstallOptions{})
++}
++
++// UninstallWithOptions uninstalls a release; NoWait and Timeout apply to the wait for its objects to be deleted.
++func (h *Helm) UninstallWithOptions(ctx context.Context, name string, namespace string, opts InstallOptions) (string, error) {
+ 	cfg, err := h.newAction(ctx, h.kubernetes.NamespaceOrDefault(namespace), false)
+ 	if err != nil {
+ 		return "", err
+@@ -127,8 +171,11 @@ func (h *Helm) Uninstall(ctx context.Context, name string, namespace string) (st
+ 	// release that really does not exist is reported as not found (with success, as
+ 	// before); any other lookup error is returned.
+ 	uninstall.IgnoreNotFound = false
+-	uninstall.Wait = true
++	uninstall.Wait = !opts.NoWait
+ 	uninstall.Timeout = 5 * time.Minute
++	if opts.Timeout > 0 {
++		uninstall.Timeout = opts.Timeout
++	}
+ 	uninstalledRelease, err := uninstall.Run(name)
+ 	if errors.Is(err, driver.ErrReleaseNotFound) {
+ 		return fmt.Sprintf("Release %s not found", name), nil
+diff --git a/pkg/kubernetes/wait.go b/pkg/kubernetes/wait.go
+new file mode 100644
+index 0000000..06ffa0b
+--- /dev/null
++++ b/pkg/kubernetes/wait.go
+@@ -0,0 +1,105 @@
++package kubernetes
++
++import (
++	"context"
++	"fmt"
++	"time"
++
++	apierrors "k8s.io/apimachinery/pkg/api/errors"
++	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
++	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
++	"k8s.io/apimachinery/pkg/runtime/schema"
++)
++
++// MaxWait bounds every wait, below the request timeouts MCP clients commonly use.
++const MaxWait = 120 * time.Second
++
++// WaitPollInterval is how often a wait re-reads the object.
++var WaitPollInterval = time.Second
++
++// Readiness says whether obj has reached the state a caller waits for after a write:
++// a workload's rollout is complete, a Pod is Ready, a Job is Complete. Any other kind
++// is ready once it exists.
++func Readiness(obj *unstructured.Unstructured) (bool, string) {
++	switch obj.GetKind() {
++	case "Deployment", "StatefulSet", "DaemonSet":
++		st := rolloutStatus(obj)
++		return st.Complete, fmt.Sprintf("%d/%d updated, %d ready, %d available", st.UpdatedReplicas, st.Replicas, st.ReadyReplicas, st.AvailableReplicas)
++	case "Pod":
++		phase, _, _ := unstructured.NestedString(obj.Object, "status", "phase")
++		if phase == "Succeeded" {
++			return true, "Succeeded"
++		}
++		return conditionTrue(obj, "Ready"), "phase " + phase
++	case "Job":
++		if conditionTrue(obj, "Failed") {
++			return true, "Failed"
++		}
++		return conditionTrue(obj, "Complete"), "not complete"
++	}
++	return true, "exists"
++}
++
++func conditionTrue(obj *unstructured.Unstructured, conditionType string) bool {
++	conditions, _, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
++	for _, c := range conditions {
++		m, _ := c.(map[string]any)
++		if m["type"] == conditionType && m["status"] == "True" {
++			return true
++		}
++	}
++	return false
++}
++
++// WaitFor re-reads an object until it is ready (gone == false) or gone (gone == true),
++// or until timeout. It returns whether the state was reached and the last state seen.
++func (c *Core) WaitFor(ctx context.Context, gvk *schema.GroupVersionKind, namespace, name string, gone bool, timeout time.Duration) (bool, string, error) {
++	if timeout > MaxWait {
++		timeout = MaxWait
++	}
++	gvr, err := c.resourceFor(gvk)
++	if err != nil {
++		return false, "", err
++	}
++	namespace, err = c.effectiveNamespace(gvk, namespace)
++	if err != nil {
++		return false, "", err
++	}
++	client := c.DynamicClient().Resource(*gvr).Namespace(namespace)
++	deadline := time.Now().Add(timeout)
++	state := ""
++	for {
++		obj, err := client.Get(ctx, name, metav1.GetOptions{})
++		switch {
++		case apierrors.IsNotFound(err):
++			if gone {
++				return true, "gone", nil
++			}
++			state = "not found"
++		case err != nil:
++			return false, state, err
++		case gone:
++			state = "still exists"
++			if obj.GetDeletionTimestamp() != nil {
++				state = "terminating"
++				if f := obj.GetFinalizers(); len(f) > 0 {
++					state = fmt.Sprintf("held by finalizers %v", f)
++				}
++			}
++		default:
++			var ready bool
++			ready, state = Readiness(obj)
++			if ready {
++				return true, state, nil
++			}
++		}
++		if time.Now().Add(WaitPollInterval).After(deadline) {
++			return false, state, nil
++		}
++		select {
++		case <-ctx.Done():
++			return false, state, ctx.Err()
++		case <-time.After(WaitPollInterval):
++		}
++	}
++}
+diff --git a/pkg/mcp/helm_test.go b/pkg/mcp/helm_test.go
+index a9432a5..5051ceb 100644
+--- a/pkg/mcp/helm_test.go
++++ b/pkg/mcp/helm_test.go
+@@ -120,6 +120,50 @@ func (s *HelmSuite) TestHelmInstallInNamespace() {
+ 	})
+ }
+ 
++func (s *HelmSuite) TestHelmInstallWaitOptions() {
++	s.InitMcpClient()
++	kc := kubernetes.NewForConfigOrDie(test.EnvTestRestConfig())
++	ns, err := kc.CoreV1().Namespaces().Create(s.T().Context(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{GenerateName: "helm-wait-"}}, metav1.CreateOptions{})
++	s.Require().NoError(err)
++	defer func() {
++		// envtest runs no namespace controller: remove the release records explicitly
++		_ = kc.CoreV1().Secrets(ns.Name).DeleteCollection(context.Background(), metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: "owner=helm"})
++		_ = kc.CoreV1().Namespaces().Delete(context.Background(), ns.Name, metav1.DeleteOptions{})
++	}()
++	_, file, _, _ := runtime.Caller(0)
++	chartPath := filepath.Join(filepath.Dir(file), "testdata", "helm-chart-never-ready")
++	s.Run("wait: false returns once the objects are created", func() {
++		result, err := s.CallTool("helm_install", map[string]interface{}{"chart": chartPath, "name": "no-wait", "namespace": ns.Name, "wait": false})
++		s.Require().NoError(err)
++		s.Falsef(result.IsError, "call tool failed: %v", result.Content)
++		_, getErr := kc.AppsV1().Deployments(ns.Name).Get(s.T().Context(), "no-wait-stuck", metav1.GetOptions{})
++		s.NoError(getErr)
++	})
++	s.Run("a timeout with rollback_on_failure leaves nothing behind", func() {
++		result, err := s.CallTool("helm_install", map[string]interface{}{
++			"chart": chartPath, "name": "atomic", "namespace": ns.Name, "timeout": "2s", "rollback_on_failure": true,
++		})
++		s.Require().NoError(err)
++		s.True(result.IsError)
++		_, getErr := kc.AppsV1().Deployments(ns.Name).Get(s.T().Context(), "atomic-stuck", metav1.GetOptions{})
++		s.Truef(errors.IsNotFound(getErr), "the release's objects must be removed")
++		secrets, listErr := kc.CoreV1().Secrets(ns.Name).List(s.T().Context(), metav1.ListOptions{LabelSelector: "owner=helm,name=atomic"})
++		s.Require().NoError(listErr)
++		s.Empty(secrets.Items, "no release record may remain")
++	})
++	s.Run("a timeout without rollback names the release state", func() {
++		result, err := s.CallTool("helm_install", map[string]interface{}{"chart": chartPath, "name": "stuck", "namespace": ns.Name, "timeout": "2s"})
++		s.Require().NoError(err)
++		s.True(result.IsError)
++		s.Contains(result.Content[0].(*mcp.TextContent).Text, "release stuck is now in state \"failed\" in namespace "+ns.Name)
++	})
++	s.Run("an invalid timeout is refused", func() {
++		result, err := s.CallTool("helm_install", map[string]interface{}{"chart": chartPath, "name": "bad-timeout", "timeout": "four minutes"})
++		s.Require().NoError(err)
++		s.True(result.IsError)
++	})
++}
++
+ func (s *HelmSuite) TestHelmInstallDenied() {
+ 	configtest.OverlayTOML(s.T(), &s.Cfg, `
+ 		denied_resources = [ { version = "v1", kind = "Secret" } ]
+diff --git a/pkg/mcp/resources_test.go b/pkg/mcp/resources_test.go
+index a57aaf4..9d9d4bc 100644
+--- a/pkg/mcp/resources_test.go
++++ b/pkg/mcp/resources_test.go
+@@ -1596,6 +1596,34 @@ func (s *ResourcesSuite) TestResourcesDeleteTellsTheTruth() {
+ 	})
+ }
+ 
++func (s *ResourcesSuite) TestResourcesWait() {
++	s.InitMcpClient()
++	s.Run("create_or_update waits for a ConfigMap to exist", func() {
++		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{
++			"resource": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm-waited\n  namespace: default\n", "wait": 5,
++		})
++		s.Require().NoError(err)
++		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++		s.Contains(result.Content[0].(*mcp.TextContent).Text, "# wait: ConfigMap default/cm-waited is ready (exists)")
++	})
++	s.Run("a Deployment that never becomes ready is reported, not failed", func() {
++		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{
++			"resource": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: never-ready\n  namespace: default\nspec:\n  replicas: 1\n  selector:\n    matchLabels:\n      app: nr\n  template:\n    metadata:\n      labels:\n        app: nr\n    spec:\n      containers:\n      - name: c\n        image: nginx\n",
++			"wait":     1,
++		})
++		s.Require().NoError(err)
++		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++		s.Contains(result.Content[0].(*mcp.TextContent).Text, "# wait: Deployment default/never-ready is NOT ready yet after the wait (0/1 updated")
++	})
++	s.Run("a wait above the maximum is refused", func() {
++		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{
++			"resource": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm-not-waited\n  namespace: default\n", "wait": 600,
++		})
++		s.Require().NoError(err)
++		s.True(result.IsError)
++	})
++}
++
+ func TestResources(t *testing.T) {
+ 	suite.Run(t, new(ResourcesSuite))
+ }
+diff --git a/pkg/mcp/testdata/helm-chart-never-ready/Chart.yaml b/pkg/mcp/testdata/helm-chart-never-ready/Chart.yaml
+new file mode 100644
+index 0000000..b493bc8
+--- /dev/null
++++ b/pkg/mcp/testdata/helm-chart-never-ready/Chart.yaml
+@@ -0,0 +1,4 @@
++apiVersion: v2
++name: never-ready
++version: 0.1.0
++type: application
+diff --git a/pkg/mcp/testdata/helm-chart-never-ready/templates/deployment.yaml b/pkg/mcp/testdata/helm-chart-never-ready/templates/deployment.yaml
+new file mode 100644
+index 0000000..5d6e012
+--- /dev/null
++++ b/pkg/mcp/testdata/helm-chart-never-ready/templates/deployment.yaml
+@@ -0,0 +1,17 @@
++apiVersion: apps/v1
++kind: Deployment
++metadata:
++  name: {{ .Release.Name }}-stuck
++spec:
++  replicas: 1
++  selector:
++    matchLabels:
++      app: {{ .Release.Name }}-stuck
++  template:
++    metadata:
++      labels:
++        app: {{ .Release.Name }}-stuck
++    spec:
++      containers:
++      - name: app
++        image: example.invalid/never:0
+diff --git a/pkg/mcp/testdata/toolsets-core-tools.json b/pkg/mcp/testdata/toolsets-core-tools.json
+index 59ca753..1224a4b 100644
+--- a/pkg/mcp/testdata/toolsets-core-tools.json
++++ b/pkg/mcp/testdata/toolsets-core-tools.json
+@@ -1121,6 +1121,12 @@
+         "resource": {
+           "description": "Complete YAML or JSON representation of the Kubernetes resource (full desired state, not a partial patch). Include apiVersion, kind, metadata, and the full spec. For namespaced resources, include metadata.namespace to specify the target namespace; if omitted, the configured default namespace is used",
+           "type": "string"
++        },
++        "wait": {
++          "description": "Optional: wait up to this many seconds (max 120; keep it under your client's request timeout) for the result: a workload's rollout complete, a Pod Ready, a Job complete, a deleted object gone. The result then says whether that state was reached; a timeout is reported, not treated as a failure of the write.",
++          "maximum": 120,
++          "minimum": 0,
++          "type": "integer"
+         }
+       },
+       "required": [
+@@ -1227,6 +1233,12 @@
+         "uid": {
+           "description": "Optional precondition: the metadata.uid you read. The delete is refused if the object was deleted and recreated under the same name since.",
+           "type": "string"
++        },
++        "wait": {
++          "description": "Optional: wait up to this many seconds (max 120; keep it under your client's request timeout) for the result: a workload's rollout complete, a Pod Ready, a Job complete, a deleted object gone. The result then says whether that state was reached; a timeout is reported, not treated as a failure of the write.",
++          "maximum": 120,
++          "minimum": 0,
++          "type": "integer"
+         }
+       },
+       "required": [
+@@ -1670,6 +1682,12 @@
+         "to_revision": {
+           "description": "undo only: the revision to roll back to (default: the previous one)",
+           "type": "integer"
++        },
++        "wait": {
++          "description": "Optional: wait up to this many seconds (max 120; keep it under your client's request timeout) for the result: a workload's rollout complete, a Pod Ready, a Job complete, a deleted object gone. The result then says whether that state was reached; a timeout is reported, not treated as a failure of the write.",
++          "maximum": 120,
++          "minimum": 0,
++          "type": "integer"
+         }
+       },
+       "required": [
+@@ -1771,6 +1789,12 @@
+         "scale": {
+           "description": "Optional scale to update the resources scale to. If not provided, will return the current scale of the resource, and not update it",
+           "type": "integer"
++        },
++        "wait": {
++          "description": "Optional: wait up to this many seconds (max 120; keep it under your client's request timeout) for the result: a workload's rollout complete, a Pod Ready, a Job complete, a deleted object gone. The result then says whether that state was reached; a timeout is reported, not treated as a failure of the write.",
++          "maximum": 120,
++          "minimum": 0,
++          "type": "integer"
+         }
+       },
+       "required": [
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+index 9499670..9b19663 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+@@ -1238,6 +1238,12 @@
+         "resource": {
+           "description": "Complete YAML or JSON representation of the Kubernetes resource (full desired state, not a partial patch). Include apiVersion, kind, metadata, and the full spec. For namespaced resources, include metadata.namespace to specify the target namespace; if omitted, the configured default namespace is used",
+           "type": "string"
++        },
++        "wait": {
++          "description": "Optional: wait up to this many seconds (max 120; keep it under your client's request timeout) for the result: a workload's rollout complete, a Pod Ready, a Job complete, a deleted object gone. The result then says whether that state was reached; a timeout is reported, not treated as a failure of the write.",
++          "maximum": 120,
++          "minimum": 0,
++          "type": "integer"
+         }
+       },
+       "required": [
+@@ -1348,6 +1354,12 @@
+         "uid": {
+           "description": "Optional precondition: the metadata.uid you read. The delete is refused if the object was deleted and recreated under the same name since.",
+           "type": "string"
++        },
++        "wait": {
++          "description": "Optional: wait up to this many seconds (max 120; keep it under your client's request timeout) for the result: a workload's rollout complete, a Pod Ready, a Job complete, a deleted object gone. The result then says whether that state was reached; a timeout is reported, not treated as a failure of the write.",
++          "maximum": 120,
++          "minimum": 0,
++          "type": "integer"
+         }
+       },
+       "required": [
+@@ -1811,6 +1823,12 @@
+         "to_revision": {
+           "description": "undo only: the revision to roll back to (default: the previous one)",
+           "type": "integer"
++        },
++        "wait": {
++          "description": "Optional: wait up to this many seconds (max 120; keep it under your client's request timeout) for the result: a workload's rollout complete, a Pod Ready, a Job complete, a deleted object gone. The result then says whether that state was reached; a timeout is reported, not treated as a failure of the write.",
++          "maximum": 120,
++          "minimum": 0,
++          "type": "integer"
+         }
+       },
+       "required": [
+@@ -1916,6 +1934,12 @@
+         "scale": {
+           "description": "Optional scale to update the resources scale to. If not provided, will return the current scale of the resource, and not update it",
+           "type": "integer"
++        },
++        "wait": {
++          "description": "Optional: wait up to this many seconds (max 120; keep it under your client's request timeout) for the result: a workload's rollout complete, a Pod Ready, a Job complete, a deleted object gone. The result then says whether that state was reached; a timeout is reported, not treated as a failure of the write.",
++          "maximum": 120,
++          "minimum": 0,
++          "type": "integer"
+         }
+       },
+       "required": [
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-openshift.json b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+index a335232..c7244a3 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-openshift.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+@@ -1148,6 +1148,12 @@
+         "resource": {
+           "description": "Complete YAML or JSON representation of the Kubernetes resource (full desired state, not a partial patch). Include apiVersion, kind, metadata, and the full spec. For namespaced resources, include metadata.namespace to specify the target namespace; if omitted, the configured default namespace is used",
+           "type": "string"
++        },
++        "wait": {
++          "description": "Optional: wait up to this many seconds (max 120; keep it under your client's request timeout) for the result: a workload's rollout complete, a Pod Ready, a Job complete, a deleted object gone. The result then says whether that state was reached; a timeout is reported, not treated as a failure of the write.",
++          "maximum": 120,
++          "minimum": 0,
++          "type": "integer"
+         }
+       },
+       "required": [
+@@ -1254,6 +1260,12 @@
+         "uid": {
+           "description": "Optional precondition: the metadata.uid you read. The delete is refused if the object was deleted and recreated under the same name since.",
+           "type": "string"
++        },
++        "wait": {
++          "description": "Optional: wait up to this many seconds (max 120; keep it under your client's request timeout) for the result: a workload's rollout complete, a Pod Ready, a Job complete, a deleted object gone. The result then says whether that state was reached; a timeout is reported, not treated as a failure of the write.",
++          "maximum": 120,
++          "minimum": 0,
++          "type": "integer"
+         }
+       },
+       "required": [
+@@ -1697,6 +1709,12 @@
+         "to_revision": {
+           "description": "undo only: the revision to roll back to (default: the previous one)",
+           "type": "integer"
++        },
++        "wait": {
++          "description": "Optional: wait up to this many seconds (max 120; keep it under your client's request timeout) for the result: a workload's rollout complete, a Pod Ready, a Job complete, a deleted object gone. The result then says whether that state was reached; a timeout is reported, not treated as a failure of the write.",
++          "maximum": 120,
++          "minimum": 0,
++          "type": "integer"
+         }
+       },
+       "required": [
+@@ -1798,6 +1816,12 @@
+         "scale": {
+           "description": "Optional scale to update the resources scale to. If not provided, will return the current scale of the resource, and not update it",
+           "type": "integer"
++        },
++        "wait": {
++          "description": "Optional: wait up to this many seconds (max 120; keep it under your client's request timeout) for the result: a workload's rollout complete, a Pod Ready, a Job complete, a deleted object gone. The result then says whether that state was reached; a timeout is reported, not treated as a failure of the write.",
++          "maximum": 120,
++          "minimum": 0,
++          "type": "integer"
+         }
+       },
+       "required": [
+diff --git a/pkg/mcp/testdata/toolsets-full-tools.json b/pkg/mcp/testdata/toolsets-full-tools.json
+index a335232..c7244a3 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools.json
++++ b/pkg/mcp/testdata/toolsets-full-tools.json
+@@ -1148,6 +1148,12 @@
+         "resource": {
+           "description": "Complete YAML or JSON representation of the Kubernetes resource (full desired state, not a partial patch). Include apiVersion, kind, metadata, and the full spec. For namespaced resources, include metadata.namespace to specify the target namespace; if omitted, the configured default namespace is used",
+           "type": "string"
++        },
++        "wait": {
++          "description": "Optional: wait up to this many seconds (max 120; keep it under your client's request timeout) for the result: a workload's rollout complete, a Pod Ready, a Job complete, a deleted object gone. The result then says whether that state was reached; a timeout is reported, not treated as a failure of the write.",
++          "maximum": 120,
++          "minimum": 0,
++          "type": "integer"
+         }
+       },
+       "required": [
+@@ -1254,6 +1260,12 @@
+         "uid": {
+           "description": "Optional precondition: the metadata.uid you read. The delete is refused if the object was deleted and recreated under the same name since.",
+           "type": "string"
++        },
++        "wait": {
++          "description": "Optional: wait up to this many seconds (max 120; keep it under your client's request timeout) for the result: a workload's rollout complete, a Pod Ready, a Job complete, a deleted object gone. The result then says whether that state was reached; a timeout is reported, not treated as a failure of the write.",
++          "maximum": 120,
++          "minimum": 0,
++          "type": "integer"
+         }
+       },
+       "required": [
+@@ -1697,6 +1709,12 @@
+         "to_revision": {
+           "description": "undo only: the revision to roll back to (default: the previous one)",
+           "type": "integer"
++        },
++        "wait": {
++          "description": "Optional: wait up to this many seconds (max 120; keep it under your client's request timeout) for the result: a workload's rollout complete, a Pod Ready, a Job complete, a deleted object gone. The result then says whether that state was reached; a timeout is reported, not treated as a failure of the write.",
++          "maximum": 120,
++          "minimum": 0,
++          "type": "integer"
+         }
+       },
+       "required": [
+@@ -1798,6 +1816,12 @@
+         "scale": {
+           "description": "Optional scale to update the resources scale to. If not provided, will return the current scale of the resource, and not update it",
+           "type": "integer"
++        },
++        "wait": {
++          "description": "Optional: wait up to this many seconds (max 120; keep it under your client's request timeout) for the result: a workload's rollout complete, a Pod Ready, a Job complete, a deleted object gone. The result then says whether that state was reached; a timeout is reported, not treated as a failure of the write.",
++          "maximum": 120,
++          "minimum": 0,
++          "type": "integer"
+         }
+       },
+       "required": [
+diff --git a/pkg/mcp/testdata/toolsets-helm-tools.json b/pkg/mcp/testdata/toolsets-helm-tools.json
+index 1800319..41bf7da 100644
+--- a/pkg/mcp/testdata/toolsets-helm-tools.json
++++ b/pkg/mcp/testdata/toolsets-helm-tools.json
+@@ -30,10 +30,22 @@
+           "description": "Namespace to install the Helm chart in (Optional, current namespace if not provided)",
+           "type": "string"
+         },
++        "rollback_on_failure": {
++          "description": "If the install fails or times out, uninstall the release again (helm install --atomic), so nothing is left behind and the name is free for a retry. Implies wait.",
++          "type": "boolean"
++        },
++        "timeout": {
++          "description": "How long to wait for readiness and hooks, as a Go duration such as '45s' or '4m' (default '5m'). Keep it under your client's request timeout, or the outcome is lost.",
++          "type": "string"
++        },
+         "values": {
+           "description": "Values to pass to the Helm chart (Optional)",
+           "properties": {},
+           "type": "object"
++        },
++        "wait": {
++          "description": "Wait until every object of the release is ready (default true). With false the call returns once the objects are created; follow them with the core tools.",
++          "type": "boolean"
+         }
+       },
+       "required": [
+@@ -140,6 +152,14 @@
+         "namespace": {
+           "description": "Namespace to uninstall the Helm release from (Optional, current namespace if not provided)",
+           "type": "string"
++        },
++        "timeout": {
++          "description": "How long to wait, as a Go duration such as '60s' (default '5m').",
++          "type": "string"
++        },
++        "wait": {
++          "description": "Wait until the release's objects are deleted (default true).",
++          "type": "boolean"
+         }
+       },
+       "required": [
+diff --git a/pkg/toolsets/core/resources.go b/pkg/toolsets/core/resources.go
+index 373f89f..5f7a2df 100644
+--- a/pkg/toolsets/core/resources.go
++++ b/pkg/toolsets/core/resources.go
+@@ -184,6 +184,7 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
+ 						Enum:        []any{"stop", "rollback"},
+ 						Description: "For multi-document manifests, if a document fails after earlier ones were written: 'stop' (default) leaves the written ones and lists them; 'rollback' deletes the ones this call created. Objects that existed before are not restored. This is a compensating action, not a transaction: the result lists exactly what was rolled back and what was not.",
+ 					},
++					"wait": waitProperty,
+ 				},
+ 				Required: []string{"resource"},
+ 			},
+@@ -327,6 +328,7 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
+ 						Type:        "boolean",
+ 						Description: "With labelSelector: list the objects that would be affected and change nothing.",
+ 					},
++					"wait": waitProperty,
+ 				},
+ 				Required: []string{"apiVersion", "kind"},
+ 			},
+@@ -388,6 +390,7 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
+ 						Type:        "boolean",
+ 						Description: "With labelSelector: list the objects that would be affected and change nothing.",
+ 					},
++					"wait": waitProperty,
+ 				},
+ 				Required: []string{"apiVersion", "kind"},
+ 			},
+@@ -676,7 +679,8 @@ func resourcesCreateOrUpdate(params api.ToolHandlerParams) (*api.ToolCallResult,
+ 	default:
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to create or update resources: mode must be \"apply\" or \"create\", got %q", mode)), nil
+ 	}
+-	if err := p.Err(); err != nil {
++	wait, waitErr := waitSeconds(p)
++	if err := errors.Join(p.Err(), waitErr); err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to create or update resources: %w", err)), nil
+ 	}
+ 
+@@ -695,6 +699,9 @@ func resourcesCreateOrUpdate(params api.ToolHandlerParams) (*api.ToolCallResult,
+ 	if opts.DryRun {
+ 		return api.NewToolCallResult("# Dry run (server-side, dryRun=All): every document was accepted; nothing was written\n"+note+marshalledYaml, err), nil
+ 	}
++	if wait > 0 {
++		note += waitForObjects(params, resources, wait)
++	}
+ 	return api.NewToolCallResult("# The following resources (YAML) have been created or updated successfully\n"+note+marshalledYaml, err), nil
+ }
+ 
+@@ -795,7 +802,13 @@ func resourcesDelete(params api.ToolHandlerParams) (*api.ToolCallResult, error)
+ 		}
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to delete resource: %w", err)), nil
+ 	}
+-	return api.NewToolCallResult(deleteOutcomeText(gvk.Kind, ns, n, outcome), nil), nil
++	text := deleteOutcomeText(gvk.Kind, ns, n, outcome)
++	if wait, waitErr := waitSeconds(p); waitErr != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to delete resource: %w", waitErr)), nil
++	} else if wait > 0 && outcome.Pending {
++		text += "\n" + waitForGone(params, gvk, ns, n, wait)
++	}
++	return api.NewToolCallResult(text, nil), nil
+ }
+ 
+ // deleteOutcomeText states whether the object is gone or still pending.
+@@ -891,6 +904,15 @@ func resourcesScale(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to marshall scale to yaml format: %v", scale)), nil
+ 	}
++	if wait, waitErr := waitSeconds(api.WrapParams(params)); waitErr != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to get/update resource scale: %w", waitErr)), nil
++	} else if wait > 0 && shouldScale {
++		target := &unstructured.Unstructured{}
++		target.SetGroupVersionKind(*gvk)
++		target.SetNamespace(scale.GetNamespace())
++		target.SetName(n)
++		text += waitForObjects(params, []*unstructured.Unstructured{target}, wait)
++	}
+ 
+ 	return api.NewToolCallResult(text, nil), nil
+ }
+diff --git a/pkg/toolsets/core/rollout.go b/pkg/toolsets/core/rollout.go
+index b297fa4..1a01eef 100644
+--- a/pkg/toolsets/core/rollout.go
++++ b/pkg/toolsets/core/rollout.go
+@@ -1,9 +1,12 @@
+ package core
+ 
+ import (
++	"errors"
+ 	"fmt"
+ 
+ 	"github.com/google/jsonschema-go/jsonschema"
++	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
++	"k8s.io/apimachinery/pkg/runtime/schema"
+ 	"k8s.io/utils/ptr"
+ 
+ 	"github.com/containers/kubernetes-mcp-server/pkg/api"
+@@ -27,6 +30,7 @@ func initRollout() []api.ServerTool {
+ 					"namespace":   {Type: "string", Description: "Namespace of the workload (configured namespace if not provided)"},
+ 					"name":        {Type: "string", Description: "Name of the workload"},
+ 					"to_revision": {Type: "integer", Description: "undo only: the revision to roll back to (default: the previous one)"},
++					"wait":        waitProperty,
+ 				},
+ 				Required: []string{"action", "kind", "name"},
+ 			},
+@@ -57,10 +61,15 @@ func resourcesRollout(params api.ToolHandlerParams) (*api.ToolCallResult, error)
+ 	name := p.RequiredString("name")
+ 	ns := p.OptionalString("namespace", "")
+ 	toRevision := p.OptionalInt64("to_revision", 0)
+-	if err := p.Err(); err != nil {
++	wait, waitErr := waitSeconds(p)
++	if err := errors.Join(p.Err(), waitErr); err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to %s rollout: %w", action, err)), nil
+ 	}
+ 	core := kubernetes.NewCore(params)
++	if wait > 0 && action == "status" {
++		gvk := schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: kind}
++		_, _, _ = core.WaitFor(params.Context, &gvk, ns, name, false, wait)
++	}
+ 	switch action {
+ 	case "status":
+ 		st, err := core.RolloutStatusOf(params, kind, ns, name)
+@@ -78,13 +87,21 @@ func resourcesRollout(params api.ToolHandlerParams) (*api.ToolCallResult, error)
+ 		if err != nil {
+ 			return api.NewToolCallResult("", fmt.Errorf("failed to restart rollout: %w", err)), nil
+ 		}
+-		return api.NewToolCallResult(fmt.Sprintf("# %s %s/%s restart requested (generation %d); call resources_rollout status to follow it\n", kind, obj.GetNamespace(), name, obj.GetGeneration()), nil), nil
++		text := fmt.Sprintf("# %s %s/%s restart requested (generation %d); call resources_rollout status to follow it\n", kind, obj.GetNamespace(), name, obj.GetGeneration())
++		if wait > 0 {
++			text += waitForObjects(params, []*unstructured.Unstructured{obj}, wait)
++		}
++		return api.NewToolCallResult(text, nil), nil
+ 	case "undo":
+ 		obj, from, to, err := core.RolloutUndo(params, kind, ns, name, toRevision)
+ 		if err != nil {
+ 			return api.NewToolCallResult("", fmt.Errorf("failed to undo rollout: %w", err)), nil
+ 		}
+-		return api.NewToolCallResult(fmt.Sprintf("# %s %s/%s rolled back from revision %d to the Pod template of revision %d (the rollout creates a new revision); call resources_rollout status to follow it\n", kind, obj.GetNamespace(), name, from, to), nil), nil
++		text := fmt.Sprintf("# %s %s/%s rolled back from revision %d to the Pod template of revision %d (the rollout creates a new revision); call resources_rollout status to follow it\n", kind, obj.GetNamespace(), name, from, to)
++		if wait > 0 {
++			text += waitForObjects(params, []*unstructured.Unstructured{obj}, wait)
++		}
++		return api.NewToolCallResult(text, nil), nil
+ 	}
+ 	return api.NewToolCallResult("", fmt.Errorf("action must be restart, undo or status, got %q", action)), nil
+ }
+diff --git a/pkg/toolsets/core/wait.go b/pkg/toolsets/core/wait.go
+new file mode 100644
+index 0000000..c22ee7c
+--- /dev/null
++++ b/pkg/toolsets/core/wait.go
+@@ -0,0 +1,70 @@
++package core
++
++import (
++	"fmt"
++	"strings"
++	"time"
++
++	"github.com/google/jsonschema-go/jsonschema"
++	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
++	"k8s.io/apimachinery/pkg/runtime/schema"
++	"k8s.io/utils/ptr"
++
++	"github.com/containers/kubernetes-mcp-server/pkg/api"
++	"github.com/containers/kubernetes-mcp-server/pkg/kubernetes"
++)
++
++// waitProperty is the schema of the optional `wait` argument (seconds).
++var waitProperty = &jsonschema.Schema{
++	Type:    "integer",
++	Minimum: ptr.To(float64(0)),
++	Maximum: ptr.To(float64(kubernetes.MaxWait / time.Second)),
++	Description: "Optional: wait up to this many seconds (max 120; keep it under your client's request timeout) for the result: " +
++		"a workload's rollout complete, a Pod Ready, a Job complete, a deleted object gone. The result then says whether that state was reached; " +
++		"a timeout is reported, not treated as a failure of the write.",
++}
++
++func waitSeconds(p *api.Params) (time.Duration, error) {
++	seconds := p.OptionalInt64("wait", 0)
++	if seconds < 0 || time.Duration(seconds)*time.Second > kubernetes.MaxWait {
++		return 0, fmt.Errorf("wait must be between 0 and %d seconds", int64(kubernetes.MaxWait/time.Second))
++	}
++	return time.Duration(seconds) * time.Second, nil
++}
++
++// waitForObjects waits for each written object to be ready and returns one line per object.
++func waitForObjects(params api.ToolHandlerParams, objs []*unstructured.Unstructured, timeout time.Duration) string {
++	core := kubernetes.NewCore(params)
++	deadline := time.Now().Add(timeout)
++	var lines []string
++	for _, obj := range objs {
++		gvk := obj.GroupVersionKind()
++		remaining := time.Until(deadline)
++		if remaining < 0 {
++			remaining = 0
++		}
++		ok, state, err := core.WaitFor(params.Context, &gvk, obj.GetNamespace(), obj.GetName(), false, remaining)
++		lines = append(lines, waitLine(gvk.Kind, obj.GetNamespace(), obj.GetName(), ok, state, err, "ready"))
++	}
++	return strings.Join(lines, "")
++}
++
++func waitForGone(params api.ToolHandlerParams, gvk *schema.GroupVersionKind, namespace, name string, timeout time.Duration) string {
++	ok, state, err := kubernetes.NewCore(params).WaitFor(params.Context, gvk, namespace, name, true, timeout)
++	return waitLine(gvk.Kind, namespace, name, ok, state, err, "gone")
++}
++
++func waitLine(kind, namespace, name string, ok bool, state string, err error, goal string) string {
++	ref := name
++	if namespace != "" {
++		ref = namespace + "/" + name
++	}
++	switch {
++	case err != nil:
++		return fmt.Sprintf("# wait: %s %s: could not be read (%v)\n", kind, ref, err)
++	case ok:
++		return fmt.Sprintf("# wait: %s %s is %s (%s)\n", kind, ref, goal, state)
++	default:
++		return fmt.Sprintf("# wait: %s %s is NOT %s yet after the wait (%s); read it again later\n", kind, ref, goal, state)
++	}
++}
+diff --git a/pkg/toolsets/helm/helm.go b/pkg/toolsets/helm/helm.go
+index f9f5d0e..e36e122 100644
+--- a/pkg/toolsets/helm/helm.go
++++ b/pkg/toolsets/helm/helm.go
+@@ -3,6 +3,7 @@ package helm
+ import (
+ 	"fmt"
+ 	"math"
++	"time"
+ 
+ 	"github.com/containers/kubernetes-mcp-server/pkg/helm"
+ 	"github.com/containers/kubernetes-mcp-server/pkg/kubernetes"
+@@ -37,6 +38,18 @@ func initHelm() []api.ServerTool {
+ 						Type:        "string",
+ 						Description: "Namespace to install the Helm chart in (Optional, current namespace if not provided)",
+ 					},
++					"wait": {
++						Type:        "boolean",
++						Description: "Wait until every object of the release is ready (default true). With false the call returns once the objects are created; follow them with the core tools.",
++					},
++					"timeout": {
++						Type:        "string",
++						Description: "How long to wait for readiness and hooks, as a Go duration such as '45s' or '4m' (default '5m'). Keep it under your client's request timeout, or the outcome is lost.",
++					},
++					"rollback_on_failure": {
++						Type:        "boolean",
++						Description: "If the install fails or times out, uninstall the release again (helm install --atomic), so nothing is left behind and the name is free for a retry. Implies wait.",
++					},
+ 				},
+ 				Required: []string{"chart"},
+ 			},
+@@ -105,6 +118,14 @@ func initHelm() []api.ServerTool {
+ 						Type:        "string",
+ 						Description: "Namespace to uninstall the Helm release from (Optional, current namespace if not provided)",
+ 					},
++					"wait": {
++						Type:        "boolean",
++						Description: "Wait until the release's objects are deleted (default true).",
++					},
++					"timeout": {
++						Type:        "string",
++						Description: "How long to wait, as a Go duration such as '60s' (default '5m').",
++					},
+ 				},
+ 				Required: []string{"name"},
+ 			},
+@@ -167,11 +188,15 @@ func helmInstall(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 	if v, ok := params.GetArguments()["namespace"].(string); ok {
+ 		namespace = v
+ 	}
++	opts, err := helmWaitOptions(params)
++	if err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to install helm chart '%s': %w", chart, err)), nil
++	}
+ 	client, err := newHelmClient(params)
+ 	if err != nil {
+ 		return api.NewToolCallResult("", err), nil
+ 	}
+-	ret, err := client.Install(params, chart, values, name, namespace)
++	ret, err := client.InstallWithOptions(params, chart, values, name, namespace, opts)
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to install helm chart '%s': %w", chart, err)), nil
+ 	}
+@@ -210,13 +235,38 @@ func helmUninstall(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 	if v, ok := params.GetArguments()["namespace"].(string); ok {
+ 		namespace = v
+ 	}
++	opts, err := helmWaitOptions(params)
++	if err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to uninstall helm chart '%s': %w", name, err)), nil
++	}
+ 	client, err := newHelmClient(params)
+ 	if err != nil {
+ 		return api.NewToolCallResult("", err), nil
+ 	}
+-	ret, err := client.Uninstall(params.Context, name, namespace)
++	ret, err := client.UninstallWithOptions(params.Context, name, namespace, opts)
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to uninstall helm chart '%s': %w", name, err)), nil
+ 	}
+ 	return api.NewToolCallResult(ret, err), nil
+ }
++
++// helmWaitOptions reads the wait, timeout and rollback_on_failure arguments.
++func helmWaitOptions(params api.ToolHandlerParams) (helm.InstallOptions, error) {
++	p := api.WrapParams(params)
++	opts := helm.InstallOptions{
++		NoWait:            !p.OptionalBool("wait", true),
++		RollbackOnFailure: p.OptionalBool("rollback_on_failure", false),
++	}
++	timeout := p.OptionalString("timeout", "")
++	if err := p.Err(); err != nil {
++		return opts, err
++	}
++	if timeout != "" {
++		d, err := time.ParseDuration(timeout)
++		if err != nil || d <= 0 {
++			return opts, fmt.Errorf("timeout must be a positive Go duration such as '45s' or '4m', got %q", timeout)
++		}
++		opts.Timeout = d
++	}
++	return opts, nil
++}

@@ -1,0 +1,358 @@
+From b35aa7b2dac5782f353801d74352c0109c98a653 Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 12:52:01 -0700
+Subject: [PATCH 17/19] feat(mcp): validate tool arguments against the input
+ schema; refuse unknown arguments (C30)
+
+The server registers tools through the go-sdk's raw AddTool path, which
+does not validate arguments against the declared input schema (the
+repository notes this in pkg/toolsets/netobserv/tools/schema.go). Each
+handler checks what it reads; anything else is ignored. On the probes,
+`dryRun: true` (no tool has it) was ignored and the write happened, and
+several handlers dropped wrongly typed values (K8S-09; the fixed build
+refuses the three that were found). Same root cause as #1584.
+
+Every tool call is now checked before its handler runs:
+- an argument the schema does not declare is refused, and the error
+  lists the arguments the tool accepts;
+- the declared types, enums, patterns, minimums and nested object
+  shapes are enforced, with the schema validator's message;
+- required arguments are left to the handlers, which already report
+  them with their own messages (unchanged).
+Nothing is done for a refused call; the result is a tool error, not a
+protocol error. Tools whose schema allows additional properties at the
+top level would need that respected; none does today.
+
+Tests that asserted a handler's own message for a value the schema
+already rejects (a string for a boolean, a negative limit, an unknown
+enum value, an empty kind) now assert the validator's message: the call
+still fails, earlier and with the schema's wording. One nodes_log test
+passed `tail`, which nodes_log does not have (its argument is
+`tailLines`) and which was silently ignored; it now passes
+`tailLines: 0` (all lines), the value it meant.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ pkg/mcp/argument_validation.go      | 57 +++++++++++++++++++++++++++++
+ pkg/mcp/argument_validation_test.go | 56 ++++++++++++++++++++++++++++
+ pkg/mcp/configuration_test.go       |  2 +-
+ pkg/mcp/helm_test.go                |  2 +-
+ pkg/mcp/kubevirt_test.go            |  8 ++--
+ pkg/mcp/nodes_test.go               |  8 ++--
+ pkg/mcp/pods_test.go                |  6 +--
+ pkg/mcp/resources_test.go           |  6 +--
+ pkg/mcp/tekton_test.go              |  2 +-
+ pkg/mcp/tools_gosdk.go              |  7 ++++
+ 10 files changed, 137 insertions(+), 17 deletions(-)
+ create mode 100644 pkg/mcp/argument_validation.go
+ create mode 100644 pkg/mcp/argument_validation_test.go
+
+diff --git a/pkg/mcp/argument_validation.go b/pkg/mcp/argument_validation.go
+new file mode 100644
+index 0000000..aa2ba44
+--- /dev/null
++++ b/pkg/mcp/argument_validation.go
+@@ -0,0 +1,57 @@
++package mcp
++
++import (
++	"fmt"
++	"slices"
++	"strings"
++
++	"github.com/google/jsonschema-go/jsonschema"
++)
++
++// argumentValidator checks tool-call arguments against the tool's input schema before
++// the handler runs. The go-sdk's raw AddTool path does not, so a wrongly typed or
++// unknown argument used to reach the handler, which could drop it silently (a dryRun
++// argument that no tool has was ignored, and the write happened).
++//
++// Required arguments are left to the handlers, which already report them with their
++// own messages; everything else in the schema (types, enums, patterns, ranges, nested
++// objects) is enforced, and an argument the schema does not declare is refused.
++type argumentValidator struct {
++	resolved *jsonschema.Resolved
++	known    []string
++}
++
++func newArgumentValidator(schema *jsonschema.Schema) (*argumentValidator, error) {
++	clone := schema.CloneSchemas()
++	clone.Required = nil
++	resolved, err := clone.Resolve(nil)
++	if err != nil {
++		return nil, err
++	}
++	known := make([]string, 0, len(schema.Properties))
++	for name := range schema.Properties {
++		known = append(known, name)
++	}
++	slices.Sort(known)
++	return &argumentValidator{resolved: resolved, known: known}, nil
++}
++
++func (v *argumentValidator) validate(arguments map[string]any) error {
++	var unknown []string
++	for name := range arguments {
++		if !slices.Contains(v.known, name) {
++			unknown = append(unknown, name)
++		}
++	}
++	if len(unknown) > 0 {
++		slices.Sort(unknown)
++		return fmt.Errorf("unknown argument(s) %s; this tool accepts: %s", strings.Join(unknown, ", "), strings.Join(v.known, ", "))
++	}
++	if arguments == nil {
++		arguments = map[string]any{}
++	}
++	if err := v.resolved.Validate(arguments); err != nil {
++		return fmt.Errorf("invalid arguments: %w", err)
++	}
++	return nil
++}
+diff --git a/pkg/mcp/argument_validation_test.go b/pkg/mcp/argument_validation_test.go
+new file mode 100644
+index 0000000..e7f9605
+--- /dev/null
++++ b/pkg/mcp/argument_validation_test.go
+@@ -0,0 +1,56 @@
++package mcp
++
++import (
++	"testing"
++
++	"github.com/modelcontextprotocol/go-sdk/mcp"
++	"github.com/stretchr/testify/suite"
++	apierrors "k8s.io/apimachinery/pkg/api/errors"
++	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
++	"k8s.io/client-go/kubernetes"
++
++	"github.com/containers/kubernetes-mcp-server/internal/test"
++)
++
++type ArgumentValidationSuite struct {
++	BaseMcpSuite
++}
++
++func (s *ArgumentValidationSuite) TestUnknownArgumentIsRefusedBeforeAnyWrite() {
++	s.InitMcpClient()
++	result, err := s.CallTool("resources_create_or_update", map[string]interface{}{
++		"resource": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm-dryrun-typo\n  namespace: default\n",
++		"dryRun":   true,
++	})
++	s.Require().NoError(err)
++	s.Run("returns an error naming the argument and the accepted ones", func() {
++		s.True(result.IsError)
++		text := result.Content[0].(*mcp.TextContent).Text
++		s.Contains(text, "unknown argument(s) dryRun")
++		s.Contains(text, "dry_run")
++	})
++	s.Run("writes nothing", func() {
++		_, getErr := kubernetes.NewForConfigOrDie(test.EnvTestRestConfig()).CoreV1().ConfigMaps("default").Get(s.T().Context(), "cm-dryrun-typo", metav1.GetOptions{})
++		s.True(apierrors.IsNotFound(getErr), "an ignored dryRun used to perform the real write")
++	})
++}
++
++func (s *ArgumentValidationSuite) TestWrongTypeIsRefused() {
++	s.InitMcpClient()
++	result, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "port": "80"})
++	s.Require().NoError(err)
++	s.True(result.IsError)
++	s.Contains(result.Content[0].(*mcp.TextContent).Text, "validating /properties/port: type")
++}
++
++func (s *ArgumentValidationSuite) TestRequiredArgumentsStillReportedByTheHandler() {
++	s.InitMcpClient()
++	result, err := s.CallTool("resources_create_or_update", map[string]interface{}{})
++	s.Require().NoError(err)
++	s.True(result.IsError)
++	s.Equal("failed to create or update resources, missing argument resource", result.Content[0].(*mcp.TextContent).Text)
++}
++
++func TestArgumentValidation(t *testing.T) {
++	suite.Run(t, new(ArgumentValidationSuite))
++}
+diff --git a/pkg/mcp/configuration_test.go b/pkg/mcp/configuration_test.go
+index b8f9e4a..8ba41a4 100644
+--- a/pkg/mcp/configuration_test.go
++++ b/pkg/mcp/configuration_test.go
+@@ -219,7 +219,7 @@ func (s *ConfigurationSuite) TestConfigurationView() {
+ 		})
+ 		s.Nilf(err, "call tool should not return error object")
+ 		s.Truef(toolResult.IsError, "call tool should fail with type mismatch")
+-		s.Equalf("failed to get configuration: minified parameter must be a boolean", toolResult.Content[0].(*mcp.TextContent).Text,
++		s.Containsf(toolResult.Content[0].(*mcp.TextContent).Text, "validating /properties/minified: type: false has type \"string\", want \"boolean\"",
+ 			"invalid error message, got %v", toolResult.Content[0].(*mcp.TextContent).Text)
+ 	})
+ 	s.Run("configuration_view(minified=false)", func() {
+diff --git a/pkg/mcp/helm_test.go b/pkg/mcp/helm_test.go
+index 4f4abe3..b91104f 100644
+--- a/pkg/mcp/helm_test.go
++++ b/pkg/mcp/helm_test.go
+@@ -540,7 +540,7 @@ func (s *HelmSuite) TestHelmListPagination() {
+ 		toolResult, err := s.CallTool("helm_list", map[string]interface{}{"limit": -1})
+ 		s.Require().NoError(err)
+ 		s.True(toolResult.IsError)
+-		s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "limit must be greater than or equal to 0")
++		s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "validating /properties/limit: minimum")
+ 	})
+ }
+ 
+diff --git a/pkg/mcp/kubevirt_test.go b/pkg/mcp/kubevirt_test.go
+index e5772d5..e4b610d 100644
+--- a/pkg/mcp/kubevirt_test.go
++++ b/pkg/mcp/kubevirt_test.go
+@@ -150,7 +150,7 @@ func (s *KubevirtSuite) TestCreate() {
+ 		})
+ 		s.Require().NoError(err)
+ 		s.True(toolResult.IsError, "a wrongly typed networks argument must not create a VM without networks")
+-		s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "networks must be an array")
++		s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "validating /properties/networks: type")
+ 	})
+ 	s.Run("vm_create with manifest text in workload", func() {
+ 		toolResult, err := s.CallTool("vm_create", map[string]interface{}{
+@@ -567,7 +567,7 @@ func (s *KubevirtSuite) TestVMLifecycle() {
+ 		})
+ 		s.Require().Nilf(err, "call tool failed %v", err)
+ 		s.Truef(toolResult.IsError, "expected call tool to fail due to invalid action")
+-		s.Truef(strings.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "invalid action"),
++		s.Truef(strings.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "validating /properties/action: enum"),
+ 			"Expected invalid action message, got %v", toolResult.Content[0].(*mcp.TextContent).Text)
+ 	})
+ 
+@@ -1271,7 +1271,7 @@ func (s *KubevirtSuite) TestVMGuestInfo() {
+ 			})
+ 			s.Nilf(err, "call tool failed %v", err)
+ 			s.Truef(toolResult.IsError, "expected error for invalid info_type")
+-			s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "invalid info_type")
++			s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "validating /properties/info_type: enum")
+ 		})
+ 
+ 		// Cleanup
+@@ -1423,7 +1423,7 @@ func (s *KubevirtSuite) TestCreateFromTemplate() {
+ 		})
+ 		s.Nilf(err, "call tool failed %v", err)
+ 		s.Truef(toolResult.IsError, "expected call tool to fail for invalid parameter types")
+-		s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "must be a string")
++		s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "want \"string\"")
+ 	})
+ }
+ 
+diff --git a/pkg/mcp/nodes_test.go b/pkg/mcp/nodes_test.go
+index c87e8e1..414ddf3 100644
+--- a/pkg/mcp/nodes_test.go
++++ b/pkg/mcp/nodes_test.go
+@@ -180,11 +180,11 @@ func (s *NodesSuite) TestNodesLog() {
+ 					"expected log content '%s', got %v", expectedMessage, toolResult.Content[0].(*mcp.TextContent).Text)
+ 			})
+ 		})
+-		s.Run("nodes_log(name=existing-node, query=/kubelet.log, tailLines=-1)", func() {
++		s.Run("nodes_log(name=existing-node, query=/kubelet.log, tailLines=0)", func() {
+ 			toolResult, err := s.CallTool("nodes_log", map[string]interface{}{
+-				"name":  "existing-node",
+-				"query": "/kubelet.log",
+-				"tail":  -1,
++				"name":      "existing-node",
++				"query":     "/kubelet.log",
++				"tailLines": 0,
+ 			})
+ 			s.Require().NotNil(toolResult, "toolResult should not be nil")
+ 			s.Run("no error", func() {
+diff --git a/pkg/mcp/pods_test.go b/pkg/mcp/pods_test.go
+index 0b74aff..f320c70 100644
+--- a/pkg/mcp/pods_test.go
++++ b/pkg/mcp/pods_test.go
+@@ -628,7 +628,7 @@ func (s *PodsSuite) TestPodsLog() {
+ 		})
+ 		s.Nilf(err, "call tool should not return error object")
+ 		s.Truef(toolResult.IsError, "call tool should fail with type mismatch")
+-		s.Equalf("failed to get pod log: previous parameter must be a boolean", toolResult.Content[0].(*mcp.TextContent).Text,
++		s.Containsf(toolResult.Content[0].(*mcp.TextContent).Text, "validating /properties/previous: type",
+ 			"invalid error message, got %v", toolResult.Content[0].(*mcp.TextContent).Text)
+ 	})
+ 	s.Run("pods_log with previous as float64 returns error without panicking", func() {
+@@ -639,7 +639,7 @@ func (s *PodsSuite) TestPodsLog() {
+ 		})
+ 		s.Nilf(err, "call tool should not return error object")
+ 		s.Truef(toolResult.IsError, "call tool should fail with type mismatch")
+-		s.Equalf("failed to get pod log: previous parameter must be a boolean", toolResult.Content[0].(*mcp.TextContent).Text,
++		s.Containsf(toolResult.Content[0].(*mcp.TextContent).Text, "validating /properties/previous: type",
+ 			"invalid error message, got %v", toolResult.Content[0].(*mcp.TextContent).Text)
+ 	})
+ 	s.Run("pods_log(tail=50) returns pod log", func() {
+@@ -658,7 +658,7 @@ func (s *PodsSuite) TestPodsLog() {
+ 			"tail":      "invalid",
+ 		})
+ 		s.Truef(podsInvalidTailLines.IsError, "call tool should fail")
+-		expectedErrorMsg := "failed to get pod log: tail parameter must be an integer"
++		expectedErrorMsg := "validating /properties/tail: type: invalid has type \"string\", want \"integer\""
+ 		errMsg := podsInvalidTailLines.Content[0].(*mcp.TextContent).Text
+ 		s.Containsf(errMsg, expectedErrorMsg, "unexpected error message, expected to contain '%s', got '%s'", expectedErrorMsg, errMsg)
+ 	})
+diff --git a/pkg/mcp/resources_test.go b/pkg/mcp/resources_test.go
+index 9d9d4bc..fc9127c 100644
+--- a/pkg/mcp/resources_test.go
++++ b/pkg/mcp/resources_test.go
+@@ -871,7 +871,7 @@ func (s *ResourcesSuite) TestResourcesDelete() {
+ 	s.Run("resources_delete with invalid gracePeriodSeconds returns error", func() {
+ 		toolResult, _ := s.CallTool("resources_delete", map[string]interface{}{"apiVersion": "v1", "kind": "ConfigMap", "name": "a-configmap", "gracePeriodSeconds": "-5"})
+ 		s.Truef(toolResult.IsError, "call tool should fail")
+-		s.Equalf("failed to delete resource, invalid argument gracePeriodSeconds", toolResult.Content[0].(*mcp.TextContent).Text,
++		s.Containsf(toolResult.Content[0].(*mcp.TextContent).Text, "validating /properties/gracePeriodSeconds: type",
+ 			"invalid error message, got %v", toolResult.Content[0].(*mcp.TextContent).Text)
+ 	})
+ 
+@@ -1235,7 +1235,7 @@ func (s *ResourcesSuite) TestResourcesListPagination() {
+ 		})
+ 		s.Require().NoError(callErr)
+ 		s.True(result.IsError)
+-		s.Contains(result.Content[0].(*mcp.TextContent).Text, "limit must be greater than or equal to 0")
++		s.Contains(result.Content[0].(*mcp.TextContent).Text, "validating /properties/limit: minimum")
+ 	})
+ }
+ 
+@@ -1325,7 +1325,7 @@ func (s *ResourcesSuite) TestAPIResourcesList() {
+ 		toolResult, err := s.CallTool("api_resources_list", map[string]interface{}{"kind": ""})
+ 		s.Nilf(err, "call tool failed %v", err)
+ 		s.Truef(toolResult.IsError, "expected an error for an empty kind filter, got: %v", toolResult.Content)
+-		s.Containsf(toolResult.Content[0].(*mcp.TextContent).Text, "must not be empty",
++		s.Containsf(toolResult.Content[0].(*mcp.TextContent).Text, "validating /properties/kind: minLength",
+ 			"error message should reject an empty kind filter, got: %v", toolResult.Content[0].(*mcp.TextContent).Text)
+ 	})
+ 	s.Run("api_resources_list with a whitespace-only kind filter returns an error", func() {
+diff --git a/pkg/mcp/tekton_test.go b/pkg/mcp/tekton_test.go
+index 00bd7ef..67ade98 100644
+--- a/pkg/mcp/tekton_test.go
++++ b/pkg/mcp/tekton_test.go
+@@ -974,7 +974,7 @@ func (s *TektonMcpSuite) TestStartRefusesWronglyTypedParams() {
+ 			s.Require().NoError(err)
+ 			s.Run("returns an error", func() {
+ 				s.True(result.IsError, "a wrongly typed params argument must not start a run without parameters")
+-				s.Contains(result.Content[0].(*mcp.TextContent).Text, "params must be an object")
++				s.Contains(result.Content[0].(*mcp.TextContent).Text, "validating /properties/params: type")
+ 			})
+ 			s.Run("starts no run", func() {
+ 				runs := "taskruns"
+diff --git a/pkg/mcp/tools_gosdk.go b/pkg/mcp/tools_gosdk.go
+index 68bf368..16f1b00 100644
+--- a/pkg/mcp/tools_gosdk.go
++++ b/pkg/mcp/tools_gosdk.go
+@@ -78,11 +78,18 @@ func ServerToolToGoSdkTool(s *Server, tool api.ServerTool) (*mcp.Tool, mcp.ToolH
+ 		}
+ 		goSdkTool.OutputSchema = outputSchema
+ 	}
++	validator, err := newArgumentValidator(inputSchema)
++	if err != nil {
++		return nil, nil, fmt.Errorf("tool %q: invalid input schema: %w", tool.Tool.Name, err)
++	}
+ 	goSdkHandler := func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+ 		toolCallRequest, err := GoSdkToolCallRequestToToolCallRequest(request)
+ 		if err != nil {
+ 			return nil, fmt.Errorf("%v for tool %s", err, tool.Tool.Name)
+ 		}
++		if err := validator.validate(toolCallRequest.GetArguments()); err != nil {
++			return NewTextResult("", fmt.Errorf("%s: %w (nothing was done)", tool.Tool.Name, err)), nil
++		}
+ 		// Snapshot the live configuration once so a concurrent reload
+ 		// can't split Config and ListOutput across two configs.
+ 		cfg := s.configuration.Load()

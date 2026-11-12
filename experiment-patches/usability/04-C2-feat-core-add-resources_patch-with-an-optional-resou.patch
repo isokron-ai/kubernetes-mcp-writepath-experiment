@@ -1,0 +1,769 @@
+From ce85cdd95b49e9d3ac2b9b8af7a661c121234825 Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 12:10:18 -0700
+Subject: [PATCH 04/19] feat(core): add resources_patch with an optional
+ resourceVersion precondition (C2)
+
+Every edit went through resources_create_or_update: read the object,
+modify it, re-apply it whole. On the hand pass that was 10 copy reads
+and 21,141 tokens of reads, resends and echoes, and it could not remove
+a field another manager owns (server-side apply only removes fields its
+own manager set), so a finalizer could not be removed and job 10 could
+not finish. Upstream #1352 (open) proposes the same tool; this follows
+its shape: resources_patch(apiVersion, kind, name, namespace,
+patchType: strategic | merge | json, patch).
+
+Additions to #1352's proposal:
+- `resourceVersion` (optional): a version-checked partial update. For
+  merge and strategic patches it is put in metadata.resourceVersion,
+  for JSON patches as a leading `test` operation; the API refuses the
+  patch with a conflict if the object changed since that version was
+  read, and the error says to read it again.
+- the patch may be JSON or YAML;
+- the result is a receipt (identity and new resourceVersion), or the
+  whole object with `output: full`.
+
+Annotations: destructive (a patch can remove fields), not idempotent (a
+JSON patch that adds to a list is not), open world. Like every non-read
+tool it is hidden under read_only. RBAC metadata: patch on the target.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ pkg/kubernetes/patch.go                       |  80 +++++++++++
+ pkg/mcp/resources_patch_test.go               | 126 ++++++++++++++++++
+ pkg/mcp/testdata/toolsets-core-tools.json     |  91 +++++++++++++
+ .../toolsets-full-tools-multicluster.json     |  95 +++++++++++++
+ .../toolsets-full-tools-openshift.json        |  91 +++++++++++++
+ pkg/mcp/testdata/toolsets-full-tools.json     |  91 +++++++++++++
+ pkg/toolsets/core/resources.go                |  72 ++++++++++
+ 7 files changed, 646 insertions(+)
+ create mode 100644 pkg/kubernetes/patch.go
+ create mode 100644 pkg/mcp/resources_patch_test.go
+
+diff --git a/pkg/kubernetes/patch.go b/pkg/kubernetes/patch.go
+new file mode 100644
+index 0000000..10c1372
+--- /dev/null
++++ b/pkg/kubernetes/patch.go
+@@ -0,0 +1,80 @@
++package kubernetes
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++
++	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
++	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
++	"k8s.io/apimachinery/pkg/runtime/schema"
++	"k8s.io/apimachinery/pkg/types"
++	"sigs.k8s.io/yaml"
++
++	"github.com/containers/kubernetes-mcp-server/pkg/version"
++)
++
++// PatchTypes maps the resources_patch patchType argument to the API's patch types.
++var PatchTypes = map[string]types.PatchType{
++	"strategic": types.StrategicMergePatchType,
++	"merge":     types.MergePatchType,
++	"json":      types.JSONPatchType,
++}
++
++// ResourcesPatch patches one object, like kubectl patch. If resourceVersion is set the
++// patch carries it as a precondition: the API refuses the patch (409 Conflict) when the
++// object has changed since that version was read.
++func (c *Core) ResourcesPatch(ctx context.Context, gvk *schema.GroupVersionKind, namespace, name, patchType, patch, resourceVersion string) (*unstructured.Unstructured, error) {
++	pt, ok := PatchTypes[patchType]
++	if !ok {
++		return nil, fmt.Errorf("patchType must be one of strategic, merge or json, got %q", patchType)
++	}
++	body, err := patchBody(pt, patch, resourceVersion)
++	if err != nil {
++		return nil, err
++	}
++	gvr, err := c.resourceFor(gvk)
++	if err != nil {
++		return nil, err
++	}
++	namespace, err = c.effectiveNamespace(gvk, namespace)
++	if err != nil {
++		return nil, err
++	}
++	return c.DynamicClient().Resource(*gvr).Namespace(namespace).Patch(ctx, name, pt, body, metav1.PatchOptions{FieldManager: version.BinaryName})
++}
++
++// patchBody converts a YAML or JSON patch to JSON and adds the resourceVersion
++// precondition: in metadata for merge patches, as a leading test operation for JSON patches.
++func patchBody(pt types.PatchType, patch, resourceVersion string) ([]byte, error) {
++	raw, err := yaml.YAMLToJSON([]byte(patch))
++	if err != nil {
++		return nil, fmt.Errorf("patch is neither JSON nor YAML: %w", err)
++	}
++	if pt == types.JSONPatchType {
++		var ops []map[string]any
++		if err := json.Unmarshal(raw, &ops); err != nil {
++			return nil, fmt.Errorf("a json patch must be an array of operations: %w", err)
++		}
++		if len(ops) == 0 {
++			return nil, fmt.Errorf("a json patch needs at least one operation")
++		}
++		if resourceVersion != "" {
++			ops = append([]map[string]any{{"op": "test", "path": "/metadata/resourceVersion", "value": resourceVersion}}, ops...)
++		}
++		return json.Marshal(ops)
++	}
++	var obj map[string]any
++	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
++		return nil, fmt.Errorf("a %s patch must be an object", map[types.PatchType]string{types.MergePatchType: "merge", types.StrategicMergePatchType: "strategic"}[pt])
++	}
++	if resourceVersion != "" {
++		metadata, _ := obj["metadata"].(map[string]any)
++		if metadata == nil {
++			metadata = map[string]any{}
++		}
++		metadata["resourceVersion"] = resourceVersion
++		obj["metadata"] = metadata
++	}
++	return json.Marshal(obj)
++}
+diff --git a/pkg/mcp/resources_patch_test.go b/pkg/mcp/resources_patch_test.go
+new file mode 100644
+index 0000000..b1b6715
+--- /dev/null
++++ b/pkg/mcp/resources_patch_test.go
+@@ -0,0 +1,126 @@
++package mcp
++
++import (
++	"testing"
++
++	"github.com/modelcontextprotocol/go-sdk/mcp"
++	"github.com/stretchr/testify/suite"
++	appsv1 "k8s.io/api/apps/v1"
++	corev1 "k8s.io/api/core/v1"
++	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
++	"k8s.io/client-go/kubernetes"
++	"k8s.io/utils/ptr"
++
++	"github.com/containers/kubernetes-mcp-server/internal/test"
++)
++
++type ResourcesPatchSuite struct {
++	BaseMcpSuite
++}
++
++func (s *ResourcesPatchSuite) TestResourcesPatch() {
++	s.InitMcpClient()
++	client := kubernetes.NewForConfigOrDie(test.EnvTestRestConfig())
++	cm, err := client.CoreV1().ConfigMaps("default").Create(s.T().Context(), &corev1.ConfigMap{
++		ObjectMeta: metav1.ObjectMeta{Name: "cm-to-patch", Annotations: map[string]string{"stale": "yes", "keep": "yes"}},
++		Data:       map[string]string{"LOG_LEVEL": "info", "MAX_CONNECTIONS": "100"},
++	}, metav1.CreateOptions{FieldManager: "someone-else"})
++	s.Require().NoError(err)
++	get := func() *corev1.ConfigMap {
++		current, getErr := client.CoreV1().ConfigMaps("default").Get(s.T().Context(), "cm-to-patch", metav1.GetOptions{})
++		s.Require().NoError(getErr)
++		return current
++	}
++
++	s.Run("merge patch changes one key and keeps the others", func() {
++		result, err := s.CallTool("resources_patch", map[string]interface{}{
++			"apiVersion": "v1", "kind": "ConfigMap", "namespace": "default", "name": "cm-to-patch",
++			"patchType": "merge", "patch": `{"data":{"LOG_LEVEL":"debug"}}`,
++		})
++		s.Require().NoError(err)
++		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++		s.Equal(map[string]string{"LOG_LEVEL": "debug", "MAX_CONNECTIONS": "100"}, get().Data)
++	})
++	s.Run("merge patch with null removes a key set by another manager", func() {
++		result, err := s.CallTool("resources_patch", map[string]interface{}{
++			"apiVersion": "v1", "kind": "ConfigMap", "namespace": "default", "name": "cm-to-patch",
++			"patchType": "merge", "patch": "metadata:\n  annotations:\n    stale: null\n",
++		})
++		s.Require().NoError(err)
++		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++		s.Equal(map[string]string{"keep": "yes"}, get().Annotations)
++	})
++	s.Run("a stale resourceVersion is refused and changes nothing", func() {
++		result, err := s.CallTool("resources_patch", map[string]interface{}{
++			"apiVersion": "v1", "kind": "ConfigMap", "namespace": "default", "name": "cm-to-patch",
++			"patchType": "merge", "patch": `{"data":{"MAX_CONNECTIONS":"1"}}`, "resourceVersion": cm.ResourceVersion,
++		})
++		s.Require().NoError(err)
++		s.True(result.IsError)
++		s.Contains(result.Content[0].(*mcp.TextContent).Text, "the object changed after resourceVersion")
++		s.Equal("100", get().Data["MAX_CONNECTIONS"])
++	})
++	s.Run("json patch with the current resourceVersion succeeds", func() {
++		current := get()
++		result, err := s.CallTool("resources_patch", map[string]interface{}{
++			"apiVersion": "v1", "kind": "ConfigMap", "namespace": "default", "name": "cm-to-patch",
++			"patchType": "json", "patch": `[{"op":"remove","path":"/data/MAX_CONNECTIONS"}]`, "resourceVersion": current.ResourceVersion,
++		})
++		s.Require().NoError(err)
++		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++		s.Equal(map[string]string{"LOG_LEVEL": "debug"}, get().Data)
++	})
++	s.Run("returns a receipt", func() {
++		result, err := s.CallTool("resources_patch", map[string]interface{}{
++			"apiVersion": "v1", "kind": "ConfigMap", "namespace": "default", "name": "cm-to-patch",
++			"patchType": "merge", "patch": `{"data":{"A":"b"}}`,
++		})
++		s.Require().NoError(err)
++		text := result.Content[0].(*mcp.TextContent).Text
++		s.Contains(text, "# ConfigMap cm-to-patch patched (merge patch)")
++		s.Contains(text, "resourceVersion:")
++		s.NotContains(text, "LOG_LEVEL")
++	})
++	s.Run("an unknown patchType is refused", func() {
++		result, err := s.CallTool("resources_patch", map[string]interface{}{
++			"apiVersion": "v1", "kind": "ConfigMap", "namespace": "default", "name": "cm-to-patch",
++			"patchType": "apply", "patch": `{}`,
++		})
++		s.Require().NoError(err)
++		s.True(result.IsError)
++	})
++}
++
++func (s *ResourcesPatchSuite) TestStrategicPatchMergesContainersByName() {
++	s.InitMcpClient()
++	client := kubernetes.NewForConfigOrDie(test.EnvTestRestConfig())
++	_, err := client.AppsV1().Deployments("default").Create(s.T().Context(), &appsv1.Deployment{
++		ObjectMeta: metav1.ObjectMeta{Name: "deployment-to-patch"},
++		Spec: appsv1.DeploymentSpec{
++			Replicas: ptr.To(int32(1)),
++			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "p"}},
++			Template: corev1.PodTemplateSpec{
++				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "p"}},
++				Spec: corev1.PodSpec{Containers: []corev1.Container{
++					{Name: "app", Image: "nginx:1"}, {Name: "sidecar", Image: "busybox:1"},
++				}},
++			},
++		},
++	}, metav1.CreateOptions{})
++	s.Require().NoError(err)
++	result, err := s.CallTool("resources_patch", map[string]interface{}{
++		"apiVersion": "apps/v1", "kind": "Deployment", "namespace": "default", "name": "deployment-to-patch",
++		"patchType": "strategic", "patch": `{"spec":{"template":{"spec":{"containers":[{"name":"app","image":"nginx:2"}]}}}}`,
++	})
++	s.Require().NoError(err)
++	s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++	d, err := client.AppsV1().Deployments("default").Get(s.T().Context(), "deployment-to-patch", metav1.GetOptions{})
++	s.Require().NoError(err)
++	s.Require().Len(d.Spec.Template.Spec.Containers, 2)
++	s.Equal("nginx:2", d.Spec.Template.Spec.Containers[0].Image)
++	s.Equal("busybox:1", d.Spec.Template.Spec.Containers[1].Image)
++}
++
++func TestResourcesPatch(t *testing.T) {
++	suite.Run(t, new(ResourcesPatchSuite))
++}
+diff --git a/pkg/mcp/testdata/toolsets-core-tools.json b/pkg/mcp/testdata/toolsets-core-tools.json
+index e35563a..ea8e2ae 100644
+--- a/pkg/mcp/testdata/toolsets-core-tools.json
++++ b/pkg/mcp/testdata/toolsets-core-tools.json
+@@ -1259,6 +1259,97 @@
+     "name": "resources_list",
+     "title": "Resources: List"
+   },
++  {
++    "_meta": {
++      "io.kubernetes-mcp-server/rbac": {
++        "bounded": {
++          "requirements": [
++            {
++              "namespace": {
++                "argument": "namespace"
++              },
++              "resourceName": {
++                "argument": "name"
++              },
++              "target": {
++                "gvk": {
++                  "apiVersionArgument": "apiVersion",
++                  "kindArgument": "kind"
++                }
++              },
++              "verbs": [
++                "patch"
++              ]
++            }
++          ]
++        },
++        "version": "v1alpha1"
++      }
++    },
++    "annotations": {
++      "destructiveHint": true,
++      "idempotentHint": false,
++      "openWorldHint": true,
++      "readOnlyHint": false,
++      "title": "Resources: Patch"
++    },
++    "description": "Patch one Kubernetes resource, like kubectl patch: change, add or remove individual fields without sending the whole object. Use it for one-field edits, to remove a label, annotation or finalizer, or to delete a map key that another tool or person set (server-side apply cannot remove fields it does not own). Pass resourceVersion (from a read) to make the patch fail instead of overwriting a change made since.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
++    "inputSchema": {
++      "properties": {
++        "apiVersion": {
++          "description": "apiVersion of the resource (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)",
++          "type": "string"
++        },
++        "kind": {
++          "description": "kind of the resource (examples of valid kind are: Pod, Service, Deployment, Ingress)",
++          "type": "string"
++        },
++        "name": {
++          "description": "Name of the resource",
++          "type": "string"
++        },
++        "namespace": {
++          "description": "Optional Namespace of the resource (ignored for cluster scoped resources). If not provided, the configured namespace is used",
++          "type": "string"
++        },
++        "output": {
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "enum": [
++            "receipt",
++            "full"
++          ],
++          "type": "string"
++        },
++        "patch": {
++          "description": "The patch, as JSON or YAML",
++          "type": "string"
++        },
++        "patchType": {
++          "description": "'merge' (JSON merge patch, RFC 7386: an object; null removes a key), 'strategic' (built-in kinds only: merges lists by key, e.g. containers by name), 'json' (JSON patch, RFC 6902: an array of operations such as {\"op\":\"remove\",\"path\":\"/metadata/finalizers\"})",
++          "enum": [
++            "merge",
++            "strategic",
++            "json"
++          ],
++          "type": "string"
++        },
++        "resourceVersion": {
++          "description": "Optional precondition: the metadata.resourceVersion you read. The patch is refused with a conflict if the object has changed since.",
++          "type": "string"
++        }
++      },
++      "required": [
++        "apiVersion",
++        "kind",
++        "name",
++        "patchType",
++        "patch"
++      ],
++      "type": "object"
++    },
++    "name": "resources_patch",
++    "title": "Resources: Patch"
++  },
+   {
+     "_meta": {
+       "io.kubernetes-mcp-server/rbac": {
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+index 6c43812..6467c2c 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+@@ -1384,6 +1384,101 @@
+     "name": "resources_list",
+     "title": "Resources: List"
+   },
++  {
++    "_meta": {
++      "io.kubernetes-mcp-server/rbac": {
++        "bounded": {
++          "requirements": [
++            {
++              "namespace": {
++                "argument": "namespace"
++              },
++              "resourceName": {
++                "argument": "name"
++              },
++              "target": {
++                "gvk": {
++                  "apiVersionArgument": "apiVersion",
++                  "kindArgument": "kind"
++                }
++              },
++              "verbs": [
++                "patch"
++              ]
++            }
++          ]
++        },
++        "version": "v1alpha1"
++      }
++    },
++    "annotations": {
++      "destructiveHint": true,
++      "idempotentHint": false,
++      "openWorldHint": true,
++      "readOnlyHint": false,
++      "title": "Resources: Patch"
++    },
++    "description": "Patch one Kubernetes resource, like kubectl patch: change, add or remove individual fields without sending the whole object. Use it for one-field edits, to remove a label, annotation or finalizer, or to delete a map key that another tool or person set (server-side apply cannot remove fields it does not own). Pass resourceVersion (from a read) to make the patch fail instead of overwriting a change made since.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
++    "inputSchema": {
++      "properties": {
++        "apiVersion": {
++          "description": "apiVersion of the resource (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)",
++          "type": "string"
++        },
++        "context": {
++          "description": "Optional parameter selecting which context to run the tool in. Defaults to fake-context if not set",
++          "type": "string"
++        },
++        "kind": {
++          "description": "kind of the resource (examples of valid kind are: Pod, Service, Deployment, Ingress)",
++          "type": "string"
++        },
++        "name": {
++          "description": "Name of the resource",
++          "type": "string"
++        },
++        "namespace": {
++          "description": "Optional Namespace of the resource (ignored for cluster scoped resources). If not provided, the configured namespace is used",
++          "type": "string"
++        },
++        "output": {
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "enum": [
++            "receipt",
++            "full"
++          ],
++          "type": "string"
++        },
++        "patch": {
++          "description": "The patch, as JSON or YAML",
++          "type": "string"
++        },
++        "patchType": {
++          "description": "'merge' (JSON merge patch, RFC 7386: an object; null removes a key), 'strategic' (built-in kinds only: merges lists by key, e.g. containers by name), 'json' (JSON patch, RFC 6902: an array of operations such as {\"op\":\"remove\",\"path\":\"/metadata/finalizers\"})",
++          "enum": [
++            "merge",
++            "strategic",
++            "json"
++          ],
++          "type": "string"
++        },
++        "resourceVersion": {
++          "description": "Optional precondition: the metadata.resourceVersion you read. The patch is refused with a conflict if the object has changed since.",
++          "type": "string"
++        }
++      },
++      "required": [
++        "apiVersion",
++        "kind",
++        "name",
++        "patchType",
++        "patch"
++      ],
++      "type": "object"
++    },
++    "name": "resources_patch",
++    "title": "Resources: Patch"
++  },
+   {
+     "_meta": {
+       "io.kubernetes-mcp-server/rbac": {
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-openshift.json b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+index e9a1d57..ca8d2fc 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-openshift.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+@@ -1286,6 +1286,97 @@
+     "name": "resources_list",
+     "title": "Resources: List"
+   },
++  {
++    "_meta": {
++      "io.kubernetes-mcp-server/rbac": {
++        "bounded": {
++          "requirements": [
++            {
++              "namespace": {
++                "argument": "namespace"
++              },
++              "resourceName": {
++                "argument": "name"
++              },
++              "target": {
++                "gvk": {
++                  "apiVersionArgument": "apiVersion",
++                  "kindArgument": "kind"
++                }
++              },
++              "verbs": [
++                "patch"
++              ]
++            }
++          ]
++        },
++        "version": "v1alpha1"
++      }
++    },
++    "annotations": {
++      "destructiveHint": true,
++      "idempotentHint": false,
++      "openWorldHint": true,
++      "readOnlyHint": false,
++      "title": "Resources: Patch"
++    },
++    "description": "Patch one Kubernetes resource, like kubectl patch: change, add or remove individual fields without sending the whole object. Use it for one-field edits, to remove a label, annotation or finalizer, or to delete a map key that another tool or person set (server-side apply cannot remove fields it does not own). Pass resourceVersion (from a read) to make the patch fail instead of overwriting a change made since.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
++    "inputSchema": {
++      "properties": {
++        "apiVersion": {
++          "description": "apiVersion of the resource (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)",
++          "type": "string"
++        },
++        "kind": {
++          "description": "kind of the resource (examples of valid kind are: Pod, Service, Deployment, Ingress)",
++          "type": "string"
++        },
++        "name": {
++          "description": "Name of the resource",
++          "type": "string"
++        },
++        "namespace": {
++          "description": "Optional Namespace of the resource (ignored for cluster scoped resources). If not provided, the configured namespace is used",
++          "type": "string"
++        },
++        "output": {
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "enum": [
++            "receipt",
++            "full"
++          ],
++          "type": "string"
++        },
++        "patch": {
++          "description": "The patch, as JSON or YAML",
++          "type": "string"
++        },
++        "patchType": {
++          "description": "'merge' (JSON merge patch, RFC 7386: an object; null removes a key), 'strategic' (built-in kinds only: merges lists by key, e.g. containers by name), 'json' (JSON patch, RFC 6902: an array of operations such as {\"op\":\"remove\",\"path\":\"/metadata/finalizers\"})",
++          "enum": [
++            "merge",
++            "strategic",
++            "json"
++          ],
++          "type": "string"
++        },
++        "resourceVersion": {
++          "description": "Optional precondition: the metadata.resourceVersion you read. The patch is refused with a conflict if the object has changed since.",
++          "type": "string"
++        }
++      },
++      "required": [
++        "apiVersion",
++        "kind",
++        "name",
++        "patchType",
++        "patch"
++      ],
++      "type": "object"
++    },
++    "name": "resources_patch",
++    "title": "Resources: Patch"
++  },
+   {
+     "_meta": {
+       "io.kubernetes-mcp-server/rbac": {
+diff --git a/pkg/mcp/testdata/toolsets-full-tools.json b/pkg/mcp/testdata/toolsets-full-tools.json
+index e9a1d57..ca8d2fc 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools.json
++++ b/pkg/mcp/testdata/toolsets-full-tools.json
+@@ -1286,6 +1286,97 @@
+     "name": "resources_list",
+     "title": "Resources: List"
+   },
++  {
++    "_meta": {
++      "io.kubernetes-mcp-server/rbac": {
++        "bounded": {
++          "requirements": [
++            {
++              "namespace": {
++                "argument": "namespace"
++              },
++              "resourceName": {
++                "argument": "name"
++              },
++              "target": {
++                "gvk": {
++                  "apiVersionArgument": "apiVersion",
++                  "kindArgument": "kind"
++                }
++              },
++              "verbs": [
++                "patch"
++              ]
++            }
++          ]
++        },
++        "version": "v1alpha1"
++      }
++    },
++    "annotations": {
++      "destructiveHint": true,
++      "idempotentHint": false,
++      "openWorldHint": true,
++      "readOnlyHint": false,
++      "title": "Resources: Patch"
++    },
++    "description": "Patch one Kubernetes resource, like kubectl patch: change, add or remove individual fields without sending the whole object. Use it for one-field edits, to remove a label, annotation or finalizer, or to delete a map key that another tool or person set (server-side apply cannot remove fields it does not own). Pass resourceVersion (from a read) to make the patch fail instead of overwriting a change made since.\n(common apiVersion and kind include: v1 Pod, v1 Service, v1 Node, apps/v1 Deployment, networking.k8s.io/v1 Ingress, route.openshift.io/v1 Route)",
++    "inputSchema": {
++      "properties": {
++        "apiVersion": {
++          "description": "apiVersion of the resource (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)",
++          "type": "string"
++        },
++        "kind": {
++          "description": "kind of the resource (examples of valid kind are: Pod, Service, Deployment, Ingress)",
++          "type": "string"
++        },
++        "name": {
++          "description": "Name of the resource",
++          "type": "string"
++        },
++        "namespace": {
++          "description": "Optional Namespace of the resource (ignored for cluster scoped resources). If not provided, the configured namespace is used",
++          "type": "string"
++        },
++        "output": {
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "enum": [
++            "receipt",
++            "full"
++          ],
++          "type": "string"
++        },
++        "patch": {
++          "description": "The patch, as JSON or YAML",
++          "type": "string"
++        },
++        "patchType": {
++          "description": "'merge' (JSON merge patch, RFC 7386: an object; null removes a key), 'strategic' (built-in kinds only: merges lists by key, e.g. containers by name), 'json' (JSON patch, RFC 6902: an array of operations such as {\"op\":\"remove\",\"path\":\"/metadata/finalizers\"})",
++          "enum": [
++            "merge",
++            "strategic",
++            "json"
++          ],
++          "type": "string"
++        },
++        "resourceVersion": {
++          "description": "Optional precondition: the metadata.resourceVersion you read. The patch is refused with a conflict if the object has changed since.",
++          "type": "string"
++        }
++      },
++      "required": [
++        "apiVersion",
++        "kind",
++        "name",
++        "patchType",
++        "patch"
++      ],
++      "type": "object"
++    },
++    "name": "resources_patch",
++    "title": "Resources: Patch"
++  },
+   {
+     "_meta": {
+       "io.kubernetes-mcp-server/rbac": {
+diff --git a/pkg/toolsets/core/resources.go b/pkg/toolsets/core/resources.go
+index 1016f71..5250e5c 100644
+--- a/pkg/toolsets/core/resources.go
++++ b/pkg/toolsets/core/resources.go
+@@ -7,6 +7,7 @@ import (
+ 	"strings"
+ 
+ 	"github.com/google/jsonschema-go/jsonschema"
++	apierrors "k8s.io/apimachinery/pkg/api/errors"
+ 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+ 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+ 	"k8s.io/apimachinery/pkg/runtime/schema"
+@@ -164,6 +165,48 @@ func initResources(ctx context.Context, inspector api.ClusterInspector, targetCo
+ 			Verbs:  []string{"create", "patch"},
+ 			Target: api.RBACTarget{Manifest: &api.RBACManifestTarget{Argument: "resource"}},
+ 		}), Handler: resourcesCreateOrUpdate},
++		{Tool: api.Tool{
++			Name: "resources_patch",
++			Description: "Patch one Kubernetes resource, like kubectl patch: change, add or remove individual fields without sending the whole object. " +
++				"Use it for one-field edits, to remove a label, annotation or finalizer, or to delete a map key that another tool or person set (server-side apply cannot remove fields it does not own). " +
++				"Pass resourceVersion (from a read) to make the patch fail instead of overwriting a change made since.\n" + commonApiVersion,
++			InputSchema: &jsonschema.Schema{
++				Type: "object",
++				Properties: map[string]*jsonschema.Schema{
++					"apiVersion": {Type: "string", Description: "apiVersion of the resource (examples of valid apiVersion are: v1, apps/v1, networking.k8s.io/v1)"},
++					"kind":       {Type: "string", Description: "kind of the resource (examples of valid kind are: Pod, Service, Deployment, Ingress)"},
++					"namespace":  {Type: "string", Description: "Optional Namespace of the resource (ignored for cluster scoped resources). If not provided, the configured namespace is used"},
++					"name":       {Type: "string", Description: "Name of the resource"},
++					"patchType": {
++						Type: "string",
++						Enum: []any{"merge", "strategic", "json"},
++						Description: "'merge' (JSON merge patch, RFC 7386: an object; null removes a key), 'strategic' (built-in kinds only: merges lists by key, e.g. containers by name), " +
++							"'json' (JSON patch, RFC 6902: an array of operations such as {\"op\":\"remove\",\"path\":\"/metadata/finalizers\"})",
++					},
++					"patch": {Type: "string", Description: "The patch, as JSON or YAML"},
++					"resourceVersion": {
++						Type:        "string",
++						Description: "Optional precondition: the metadata.resourceVersion you read. The patch is refused with a conflict if the object has changed since.",
++					},
++					"output": outputProperty,
++				},
++				Required: []string{"apiVersion", "kind", "name", "patchType", "patch"},
++			},
++			Annotations: api.ToolAnnotations{
++				Title:           "Resources: Patch",
++				DestructiveHint: ptr.To(true),
++				IdempotentHint:  ptr.To(false),
++				OpenWorldHint:   ptr.To(true),
++			},
++		}, RBAC: api.RBACBounded(api.RBACRequirement{
++			Verbs: []string{"patch"},
++			Target: api.RBACTarget{GVK: &api.RBACGVKTarget{
++				APIVersionArgument: "apiVersion",
++				KindArgument:       "kind",
++			}},
++			Namespace:    &api.RBACNamespace{Argument: "namespace"},
++			ResourceName: &api.RBACResourceName{Argument: "name"},
++		}), Handler: resourcesPatch},
+ 		{Tool: api.Tool{
+ 			Name:        "resources_delete",
+ 			Description: "Delete a Kubernetes resource in the current cluster by providing its apiVersion, kind, optionally the namespace, and its name\n" + commonApiVersion,
+@@ -491,6 +534,35 @@ func resourcesCreateOrUpdate(params api.ToolHandlerParams) (*api.ToolCallResult,
+ 	return api.NewToolCallResult("# The following resources (YAML) have been created or updated successfully\n"+note+marshalledYaml, err), nil
+ }
+ 
++func resourcesPatch(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
++	gvk, err := parseGroupVersionKind(params.GetArguments())
++	if err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to patch resource, %s", err)), nil
++	}
++	p := api.WrapParams(params)
++	ns := p.OptionalString("namespace", "")
++	name := p.RequiredString("name")
++	patchType := p.RequiredString("patchType")
++	patch := p.RequiredString("patch")
++	resourceVersion := p.OptionalString("resourceVersion", "")
++	full, outputErr := wantFullOutput(p)
++	if err := errors.Join(p.Err(), outputErr); err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to patch resource: %w", err)), nil
++	}
++	patched, err := kubernetes.NewCore(params).ResourcesPatch(params, gvk, ns, name, patchType, patch, resourceVersion)
++	if err != nil {
++		if resourceVersion != "" && apierrors.IsConflict(err) {
++			err = fmt.Errorf("%w (the object changed after resourceVersion %s was read: read it again and rebuild the patch)", err, resourceVersion)
++		}
++		return api.NewToolCallResult("", fmt.Errorf("failed to patch resource: %w", err)), nil
++	}
++	text, err := writeResultYaml([]*unstructured.Unstructured{patched}, full)
++	if err != nil {
++		return api.NewToolCallResult("", fmt.Errorf("failed to patch resource: %w", err)), nil
++	}
++	return api.NewToolCallResult(fmt.Sprintf("# %s %s patched (%s patch)\n", gvk.Kind, name, patchType)+text, nil), nil
++}
++
+ func resourcesDelete(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 	namespace := params.GetArguments()["namespace"]
+ 	if namespace == nil {

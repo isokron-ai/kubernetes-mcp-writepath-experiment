@@ -1,0 +1,129 @@
+From a37eb05a44fe7de621f866d27ce8fdb399875282 Mon Sep 17 00:00:00 2001
+From: Rafe Walker <45343084+rafe-walker@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 11:32:55 -0700
+Subject: [PATCH 07/14] fix(core): reject pods_run ports outside 1-65535
+
+pods_run converted its port argument to int32 with no range check.
+A negative port silently skipped the Service (the Pod was created, the
+call succeeded), and values of 2^31 and above wrapped: 4294967376
+became a Service on port 80. The API refuses both values when they
+reach it as a Service port.
+
+The port is now checked as an int64, before the conversion: values
+below 0 or above 65535 are refused with an error and nothing is
+created. No port, or 0, still exposes nothing. The fractional-value
+truncation (8080.9 becomes 8080) is the separate issue #1584 and is
+not changed here.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ pkg/mcp/pods_run_test.go                               |  8 ++++++++
+ pkg/mcp/testdata/toolsets-core-tools.json              |  2 +-
+ pkg/mcp/testdata/toolsets-full-tools-multicluster.json |  2 +-
+ pkg/mcp/testdata/toolsets-full-tools-openshift.json    |  2 +-
+ pkg/mcp/testdata/toolsets-full-tools.json              |  2 +-
+ pkg/toolsets/core/pods.go                              | 10 ++++++++--
+ 6 files changed, 20 insertions(+), 6 deletions(-)
+
+diff --git a/pkg/mcp/pods_run_test.go b/pkg/mcp/pods_run_test.go
+index 19a56b7..ba8ae87 100644
+--- a/pkg/mcp/pods_run_test.go
++++ b/pkg/mcp/pods_run_test.go
+@@ -24,6 +24,14 @@ func (s *PodsRunSuite) TestPodsRun() {
+ 		s.Equalf("failed to run pod: image parameter required", toolResult.Content[0].(*mcp.TextContent).Text,
+ 			"invalid error message, got %v", toolResult.Content[0].(*mcp.TextContent).Text)
+ 	})
++	s.Run("pods_run with a port out of range returns error", func() {
++		for _, port := range []interface{}{-80, 70000, 4294967376} {
++			toolResult, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "name": "out-of-range-port", "port": port})
++			s.Require().NoError(err)
++			s.Truef(toolResult.IsError, "port %v must be refused", port)
++			s.Contains(toolResult.Content[0].(*mcp.TextContent).Text, "port must be between 1 and 65535")
++		}
++	})
+ 	s.Run("pods_run(image=nginx, namespace=nil), uses configured namespace", func() {
+ 		podsRunNilNamespace, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx"})
+ 		s.Run("no error", func() {
+diff --git a/pkg/mcp/testdata/toolsets-core-tools.json b/pkg/mcp/testdata/toolsets-core-tools.json
+index 718f219..eb199ea 100644
+--- a/pkg/mcp/testdata/toolsets-core-tools.json
++++ b/pkg/mcp/testdata/toolsets-core-tools.json
+@@ -839,7 +839,7 @@
+           "type": "string"
+         },
+         "port": {
+-          "description": "TCP/IP port to expose from the Pod container (Optional, no port exposed if not provided)",
++          "description": "TCP/IP port to expose from the Pod container, 1-65535 (Optional, no port exposed if not provided)",
+           "type": "number"
+         }
+       },
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+index 7720ef2..f3e2848 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+@@ -940,7 +940,7 @@
+           "type": "string"
+         },
+         "port": {
+-          "description": "TCP/IP port to expose from the Pod container (Optional, no port exposed if not provided)",
++          "description": "TCP/IP port to expose from the Pod container, 1-65535 (Optional, no port exposed if not provided)",
+           "type": "number"
+         }
+       },
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-openshift.json b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+index 4d49080..042f1c9 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-openshift.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+@@ -866,7 +866,7 @@
+           "type": "string"
+         },
+         "port": {
+-          "description": "TCP/IP port to expose from the Pod container (Optional, no port exposed if not provided)",
++          "description": "TCP/IP port to expose from the Pod container, 1-65535 (Optional, no port exposed if not provided)",
+           "type": "number"
+         }
+       },
+diff --git a/pkg/mcp/testdata/toolsets-full-tools.json b/pkg/mcp/testdata/toolsets-full-tools.json
+index 4d49080..042f1c9 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools.json
++++ b/pkg/mcp/testdata/toolsets-full-tools.json
+@@ -866,7 +866,7 @@
+           "type": "string"
+         },
+         "port": {
+-          "description": "TCP/IP port to expose from the Pod container (Optional, no port exposed if not provided)",
++          "description": "TCP/IP port to expose from the Pod container, 1-65535 (Optional, no port exposed if not provided)",
+           "type": "number"
+         }
+       },
+diff --git a/pkg/toolsets/core/pods.go b/pkg/toolsets/core/pods.go
+index 767674b..1e83382 100644
+--- a/pkg/toolsets/core/pods.go
++++ b/pkg/toolsets/core/pods.go
+@@ -329,7 +329,7 @@ func initPods(inspector api.ClusterInspector) []api.ServerTool {
+ 					},
+ 					"port": {
+ 						Type:        "number",
+-						Description: "TCP/IP port to expose from the Pod container (Optional, no port exposed if not provided)",
++						Description: "TCP/IP port to expose from the Pod container, 1-65535 (Optional, no port exposed if not provided)",
+ 					},
+ 				},
+ 				Required: []string{"image"},
+@@ -543,10 +543,16 @@ func podsRun(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 	ns := p.OptionalString("namespace", "")
+ 	name := p.OptionalString("name", "")
+ 	image := p.RequiredString("image")
+-	port := int32(p.OptionalInt64("port", 0))
++	portValue := p.OptionalInt64("port", 0)
+ 	if err := p.Err(); err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to run pod: %w", err)), nil
+ 	}
++	// 0 (or no port) exposes nothing; anything else must be a valid TCP port, checked
++	// before the conversion to int32 so large values cannot wrap into range.
++	if portValue < 0 || portValue > 65535 {
++		return api.NewToolCallResult("", fmt.Errorf("failed to run pod: port must be between 1 and 65535, got %d", portValue)), nil
++	}
++	port := int32(portValue)
+ 	resources, err := kubernetes.NewCore(params).PodsRun(params, ns, name, image, port)
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to run pod %s in namespace %s: %w", name, ns, err)), nil
