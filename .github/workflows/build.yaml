@@ -1,0 +1,135 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - 'main'
+    paths-ignore:
+      - '.gitignore'
+      - 'LICENSE'
+      - '*.md'
+  pull_request:
+  merge_group:
+
+concurrency:
+  # Only run once for latest commit per ref and cancel other (previous) runs.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check-format:
+    name: Check formatting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Run make format
+        run: make format
+      - name: Check for uncommitted changes
+        run: |
+          if ! git diff --quiet; then
+            echo "::error::Code is not formatted. Please run 'go fmt ./...' and commit the changes."
+            git diff
+            exit 1
+          fi
+
+  check-readme:
+    name: Check README is up-to-date
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Update README tools
+        run: make update-readme-tools
+      - name: Check for uncommitted changes
+        run: |
+          if ! git diff --quiet README.md docs/configuration.md; then
+            echo "::error::README.md or docs/configuration.md is out of date. Please run 'make update-readme-tools' and commit the changes."
+            git diff README.md docs/configuration.md
+            exit 1
+          fi
+
+  check-codeowners:
+    name: Check CODEOWNERS is up-to-date
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Validate ownership and check CODEOWNERS
+        run: make check-codeowners
+
+  build:
+    needs: [check-format, check-readme, check-codeowners]
+    name: Build on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest","ubuntu-24.04-arm","windows-latest","macos-15-intel","macos-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: make build
+      - name: Test
+        run: make test
+
+  cross-compile:
+    needs: [check-format, check-readme, check-codeowners]
+    if: github.event_name != 'pull_request'
+    name: Cross-compile for linux/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch:
+          - s390x
+          - ppc64le
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: make build-multiarch TARGETOS=linux TARGETARCH=${{ matrix.goarch }}
+
+  queue-build-validation:
+    name: Queue build validation
+    needs: [check-format, check-readme, check-codeowners, build, cross-compile]
+    if: always() && github.event_name != 'push'
+    runs-on: ubuntu-latest
+    env:
+      FORMAT_RESULT: ${{ needs.check-format.result }}
+      README_RESULT: ${{ needs.check-readme.result }}
+      CODEOWNERS_RESULT: ${{ needs.check-codeowners.result }}
+      BUILD_RESULT: ${{ needs.build.result }}
+      CROSS_COMPILE_RESULT: ${{ needs.cross-compile.result }}
+    steps:
+      - name: Verify build checks
+        run: |
+          test "$FORMAT_RESULT" = success
+          test "$README_RESULT" = success
+          test "$CODEOWNERS_RESULT" = success
+          test "$BUILD_RESULT" = success
+          if [ "$GITHUB_EVENT_NAME" = merge_group ]; then
+            test "$CROSS_COMPILE_RESULT" = success
+          else
+            test "$CROSS_COMPILE_RESULT" = skipped
+          fi
