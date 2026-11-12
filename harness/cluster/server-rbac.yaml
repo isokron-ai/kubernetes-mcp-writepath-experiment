@@ -1,0 +1,89 @@
+# The MCP server's own identity (the "server identity", K-G11): ServiceAccount kms in mcp-audit-system.
+# Applied by cluster/up.sh with the admin kubeconfig; cluster/kms-kubeconfig.sh then mints its token kubeconfig.
+#
+# Shape of the grant:
+#   kms-read           cluster-wide read of everyday kinds, NO Secrets (bound cluster-wide). The agent can look
+#                      around the cluster as a real user would, and protected namespaces stay readable for checks.
+#   kms-probe-write    write rights on the kinds the probes and tasks use, NO Secrets. NOT bound cluster-wide:
+#                      the probe seed (probe/seed.json) creates a RoleBinding to it inside each probe namespace,
+#                      so the server can write only in the namespace of the current run. A write anywhere else is
+#                      refused by the API (and appears in the audit log as a 403).
+# Experiments that need a narrower identity (probe 5 in research/next-target-2026-11.md: a ServiceAccount that may
+# delete Pods but not Services) bind a different ClusterRole in their own seed; add it here before the freeze.
+# The helm toolset stores releases as Secrets in the release namespace; if helm is in scope, add secrets to a
+# helm-only role bound per namespace and record the change in LEDGER.md.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcp-audit-system
+  labels:
+    app.kubernetes.io/managed-by: kubernetes-audit-harness
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kms
+  namespace: mcp-audit-system
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kms-read
+rules:
+  - apiGroups: [""]
+    resources: [namespaces, nodes, pods, pods/log, services, endpoints, configmaps, serviceaccounts, events,
+                persistentvolumeclaims, persistentvolumes, replicationcontrollers, resourcequotas, limitranges]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets, statefulsets, daemonsets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch]
+  - apiGroups: [events.k8s.io]
+    resources: [events]
+    verbs: [get, list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, networkpolicies]
+    verbs: [get, list, watch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, rolebindings, clusterroles, clusterrolebindings]
+    verbs: [get, list, watch]
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kms-read
+subjects:
+  - kind: ServiceAccount
+    name: kms
+    namespace: mcp-audit-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kms-read
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kms-probe-write
+rules:
+  - apiGroups: [""]
+    resources: [configmaps, pods, services, persistentvolumeclaims, serviceaccounts]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
+  - apiGroups: [""]
+    resources: [pods/exec, pods/log]
+    verbs: [get, create]
+  - apiGroups: [apps]
+    resources: [deployments, deployments/scale, replicasets, replicasets/scale, statefulsets, statefulsets/scale]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]

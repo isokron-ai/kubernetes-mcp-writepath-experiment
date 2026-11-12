@@ -1,0 +1,5 @@
+# Images the benchmark's seeds use, by digest, preloaded on the kind node (TASKS-DRAFT open point 1). bench/drive.mjs
+# ready checks each digest with `crictl images --digests` on the node; nothing is pulled for the seeds. (The agent may
+# still start pods with other images, e.g. a debug pod in F2; pods_run pulls with ImagePullPolicy Always.)
+docker.io/library/nginx@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de
+docker.io/library/busybox@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec

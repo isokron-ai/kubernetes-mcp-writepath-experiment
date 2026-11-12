@@ -1,0 +1,5 @@
+# Variant of server/kms.toml for the add-on jobs: default toolsets plus "helm". Everything else as kms.toml
+# (stdio, kubeconfig empty so client-go uses $KUBECONFIG = the kms ServiceAccount file, HOME = a scratch dir).
+# Note: lib/target.mjs check-server allows core/config/helm only; tekton and kubevirt variants are launched by the
+# usability client directly, not through the guard (recorded in cluster/ADDONS.md).
+toolsets = ["core", "config", "helm"]

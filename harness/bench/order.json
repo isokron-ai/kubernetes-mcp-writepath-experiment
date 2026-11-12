@@ -1,0 +1,2254 @@
+{
+ "format": "isokron/bench-order@1",
+ "seed": 20261112,
+ "rng": "python random.Random(seed): measured rounds shuffled in sequence, then the dry order",
+ "measured": [
+  {
+   "run_id": "or-k5-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "ob-k6-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "ob-f1b-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "or-f7-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "ob-k2-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "ob-f9-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "ob-f3-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "ob-f5-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "or-k1-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "ob-k3-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "ob-k5-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "ob-k1-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "ob-f4-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "or-f8-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "or-f2-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "or-f4-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "ob-f8-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "or-f1b-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "or-k3-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "or-k6-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "or-f9-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "ob-f6-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "or-k2-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "or-f3-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "or-k4-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "or-f5-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "ob-f7-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "ob-f1a-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "ob-k4-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "ob-f2-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "or-f6-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "or-f1a-1",
+   "arm": "opus",
+   "round": 1
+  },
+  {
+   "run_id": "or-f3-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "ob-f1b-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "ob-f5-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "ob-f7-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "ob-f6-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "or-f1b-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "or-k4-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "ob-k1-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "ob-f2-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "or-k6-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "or-f8-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "or-k2-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "ob-k3-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "or-f2-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "ob-f8-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "ob-k6-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "ob-f3-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "ob-k4-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "ob-k2-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "or-f6-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "or-k3-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "ob-k5-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "or-f4-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "ob-f4-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "or-f5-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "ob-f9-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "or-f7-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "or-k1-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "or-k5-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "or-f9-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "or-f1a-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "ob-f1a-2",
+   "arm": "opus",
+   "round": 2
+  },
+  {
+   "run_id": "or-f3-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "or-k6-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "ob-f2-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "or-f7-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "ob-k4-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "ob-k1-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "or-k3-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "or-k5-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "ob-f6-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "ob-f1b-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "or-k4-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "ob-f1a-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "ob-k6-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "or-f4-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "ob-f3-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "ob-f9-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "or-f5-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "ob-f7-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "ob-k2-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "or-f2-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "or-k2-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "or-f9-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "ob-k5-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "ob-k3-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "or-f6-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "ob-f5-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "or-f1a-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "or-k1-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "ob-f4-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "ob-f8-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "or-f1b-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "or-f8-3",
+   "arm": "opus",
+   "round": 3
+  },
+  {
+   "run_id": "or-f7-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "ob-f8-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "ob-f4-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "or-f3-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "or-k2-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "ob-f1a-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "or-f5-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "ob-k1-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "or-f6-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "ob-k5-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "or-k3-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "ob-f3-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "or-f8-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "or-f9-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "ob-k4-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "ob-k6-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "ob-k2-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "or-f2-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "ob-f7-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "ob-f9-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "ob-f2-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "ob-f5-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "or-k4-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "or-f1b-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "or-k1-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "or-f1a-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "ob-k3-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "or-k6-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "ob-f1b-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "or-k5-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "ob-f6-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "or-f4-4",
+   "arm": "opus",
+   "round": 4
+  },
+  {
+   "run_id": "ob-f1b-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "ob-k2-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "or-f5-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "ob-f6-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "ob-f9-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "ob-k4-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "or-f9-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "or-k2-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "or-f2-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "or-k4-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "or-f3-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "or-f4-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "ob-k1-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "ob-f5-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "ob-f1a-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "or-k3-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "or-f7-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "ob-f8-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "ob-f3-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "or-k1-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "ob-k3-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "ob-k6-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "ob-f2-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "or-f6-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "ob-f7-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "or-k6-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "ob-f4-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "or-k5-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "or-f1b-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "ob-k5-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "or-f8-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "or-f1a-5",
+   "arm": "opus",
+   "round": 5
+  },
+  {
+   "run_id": "sr-k1-1",
+   "arm": "sonnet",
+   "round": 1
+  },
+  {
+   "run_id": "sr-k2-1",
+   "arm": "sonnet",
+   "round": 1
+  },
+  {
+   "run_id": "sb-k1-1",
+   "arm": "sonnet",
+   "round": 1
+  },
+  {
+   "run_id": "sb-k5-1",
+   "arm": "sonnet",
+   "round": 1
+  },
+  {
+   "run_id": "sb-k2-1",
+   "arm": "sonnet",
+   "round": 1
+  },
+  {
+   "run_id": "sr-k4-1",
+   "arm": "sonnet",
+   "round": 1
+  },
+  {
+   "run_id": "sb-k4-1",
+   "arm": "sonnet",
+   "round": 1
+  },
+  {
+   "run_id": "sb-k6-1",
+   "arm": "sonnet",
+   "round": 1
+  },
+  {
+   "run_id": "sr-k3-1",
+   "arm": "sonnet",
+   "round": 1
+  },
+  {
+   "run_id": "sr-k5-1",
+   "arm": "sonnet",
+   "round": 1
+  },
+  {
+   "run_id": "sb-k3-1",
+   "arm": "sonnet",
+   "round": 1
+  },
+  {
+   "run_id": "sr-k6-1",
+   "arm": "sonnet",
+   "round": 1
+  },
+  {
+   "run_id": "sb-k2-2",
+   "arm": "sonnet",
+   "round": 2
+  },
+  {
+   "run_id": "sb-k4-2",
+   "arm": "sonnet",
+   "round": 2
+  },
+  {
+   "run_id": "sr-k1-2",
+   "arm": "sonnet",
+   "round": 2
+  },
+  {
+   "run_id": "sb-k5-2",
+   "arm": "sonnet",
+   "round": 2
+  },
+  {
+   "run_id": "sr-k4-2",
+   "arm": "sonnet",
+   "round": 2
+  },
+  {
+   "run_id": "sr-k5-2",
+   "arm": "sonnet",
+   "round": 2
+  },
+  {
+   "run_id": "sb-k1-2",
+   "arm": "sonnet",
+   "round": 2
+  },
+  {
+   "run_id": "sr-k2-2",
+   "arm": "sonnet",
+   "round": 2
+  },
+  {
+   "run_id": "sb-k3-2",
+   "arm": "sonnet",
+   "round": 2
+  },
+  {
+   "run_id": "sr-k6-2",
+   "arm": "sonnet",
+   "round": 2
+  },
+  {
+   "run_id": "sb-k6-2",
+   "arm": "sonnet",
+   "round": 2
+  },
+  {
+   "run_id": "sr-k3-2",
+   "arm": "sonnet",
+   "round": 2
+  },
+  {
+   "run_id": "sr-k5-3",
+   "arm": "sonnet",
+   "round": 3
+  },
+  {
+   "run_id": "sb-k3-3",
+   "arm": "sonnet",
+   "round": 3
+  },
+  {
+   "run_id": "sb-k2-3",
+   "arm": "sonnet",
+   "round": 3
+  },
+  {
+   "run_id": "sr-k1-3",
+   "arm": "sonnet",
+   "round": 3
+  },
+  {
+   "run_id": "sb-k5-3",
+   "arm": "sonnet",
+   "round": 3
+  },
+  {
+   "run_id": "sr-k3-3",
+   "arm": "sonnet",
+   "round": 3
+  },
+  {
+   "run_id": "sb-k6-3",
+   "arm": "sonnet",
+   "round": 3
+  },
+  {
+   "run_id": "sb-k1-3",
+   "arm": "sonnet",
+   "round": 3
+  },
+  {
+   "run_id": "sr-k4-3",
+   "arm": "sonnet",
+   "round": 3
+  },
+  {
+   "run_id": "sb-k4-3",
+   "arm": "sonnet",
+   "round": 3
+  },
+  {
+   "run_id": "sr-k6-3",
+   "arm": "sonnet",
+   "round": 3
+  },
+  {
+   "run_id": "sr-k2-3",
+   "arm": "sonnet",
+   "round": 3
+  },
+  {
+   "run_id": "sb-k5-4",
+   "arm": "sonnet",
+   "round": 4
+  },
+  {
+   "run_id": "sb-k4-4",
+   "arm": "sonnet",
+   "round": 4
+  },
+  {
+   "run_id": "sr-k6-4",
+   "arm": "sonnet",
+   "round": 4
+  },
+  {
+   "run_id": "sb-k3-4",
+   "arm": "sonnet",
+   "round": 4
+  },
+  {
+   "run_id": "sr-k5-4",
+   "arm": "sonnet",
+   "round": 4
+  },
+  {
+   "run_id": "sr-k2-4",
+   "arm": "sonnet",
+   "round": 4
+  },
+  {
+   "run_id": "sr-k1-4",
+   "arm": "sonnet",
+   "round": 4
+  },
+  {
+   "run_id": "sr-k3-4",
+   "arm": "sonnet",
+   "round": 4
+  },
+  {
+   "run_id": "sb-k6-4",
+   "arm": "sonnet",
+   "round": 4
+  },
+  {
+   "run_id": "sb-k1-4",
+   "arm": "sonnet",
+   "round": 4
+  },
+  {
+   "run_id": "sr-k4-4",
+   "arm": "sonnet",
+   "round": 4
+  },
+  {
+   "run_id": "sb-k2-4",
+   "arm": "sonnet",
+   "round": 4
+  },
+  {
+   "run_id": "sb-k3-5",
+   "arm": "sonnet",
+   "round": 5
+  },
+  {
+   "run_id": "sb-k2-5",
+   "arm": "sonnet",
+   "round": 5
+  },
+  {
+   "run_id": "sb-k4-5",
+   "arm": "sonnet",
+   "round": 5
+  },
+  {
+   "run_id": "sb-k5-5",
+   "arm": "sonnet",
+   "round": 5
+  },
+  {
+   "run_id": "sb-k1-5",
+   "arm": "sonnet",
+   "round": 5
+  },
+  {
+   "run_id": "sr-k3-5",
+   "arm": "sonnet",
+   "round": 5
+  },
+  {
+   "run_id": "sr-k2-5",
+   "arm": "sonnet",
+   "round": 5
+  },
+  {
+   "run_id": "sr-k5-5",
+   "arm": "sonnet",
+   "round": 5
+  },
+  {
+   "run_id": "sr-k4-5",
+   "arm": "sonnet",
+   "round": 5
+  },
+  {
+   "run_id": "sr-k1-5",
+   "arm": "sonnet",
+   "round": 5
+  },
+  {
+   "run_id": "sb-k6-5",
+   "arm": "sonnet",
+   "round": 5
+  },
+  {
+   "run_id": "sr-k6-5",
+   "arm": "sonnet",
+   "round": 5
+  },
+  {
+   "run_id": "xr-k4-1",
+   "arm": "observer",
+   "round": 1
+  },
+  {
+   "run_id": "xr-k5-1",
+   "arm": "observer",
+   "round": 1
+  },
+  {
+   "run_id": "xr-k6-1",
+   "arm": "observer",
+   "round": 1
+  },
+  {
+   "run_id": "xb-k4-1",
+   "arm": "observer",
+   "round": 1
+  },
+  {
+   "run_id": "xb-k3-1",
+   "arm": "observer",
+   "round": 1
+  },
+  {
+   "run_id": "xb-k6-1",
+   "arm": "observer",
+   "round": 1
+  },
+  {
+   "run_id": "xr-k1-1",
+   "arm": "observer",
+   "round": 1
+  },
+  {
+   "run_id": "xb-k2-1",
+   "arm": "observer",
+   "round": 1
+  },
+  {
+   "run_id": "xb-k1-1",
+   "arm": "observer",
+   "round": 1
+  },
+  {
+   "run_id": "xr-k2-1",
+   "arm": "observer",
+   "round": 1
+  },
+  {
+   "run_id": "xb-k5-1",
+   "arm": "observer",
+   "round": 1
+  },
+  {
+   "run_id": "xr-k3-1",
+   "arm": "observer",
+   "round": 1
+  },
+  {
+   "run_id": "xb-k4-2",
+   "arm": "observer",
+   "round": 2
+  },
+  {
+   "run_id": "xr-k5-2",
+   "arm": "observer",
+   "round": 2
+  },
+  {
+   "run_id": "xb-k1-2",
+   "arm": "observer",
+   "round": 2
+  },
+  {
+   "run_id": "xr-k1-2",
+   "arm": "observer",
+   "round": 2
+  },
+  {
+   "run_id": "xb-k5-2",
+   "arm": "observer",
+   "round": 2
+  },
+  {
+   "run_id": "xr-k4-2",
+   "arm": "observer",
+   "round": 2
+  },
+  {
+   "run_id": "xb-k2-2",
+   "arm": "observer",
+   "round": 2
+  },
+  {
+   "run_id": "xr-k6-2",
+   "arm": "observer",
+   "round": 2
+  },
+  {
+   "run_id": "xr-k3-2",
+   "arm": "observer",
+   "round": 2
+  },
+  {
+   "run_id": "xb-k3-2",
+   "arm": "observer",
+   "round": 2
+  },
+  {
+   "run_id": "xr-k2-2",
+   "arm": "observer",
+   "round": 2
+  },
+  {
+   "run_id": "xb-k6-2",
+   "arm": "observer",
+   "round": 2
+  }
+ ],
+ "dry": [
+  "or-k2-1",
+  "ob-f7-1",
+  "ob-k6-1",
+  "or-f8-1",
+  "or-f4-1",
+  "or-k5-1",
+  "ob-f3-1",
+  "or-f5-1",
+  "ob-f1b-1",
+  "or-f3-1",
+  "or-k3-1",
+  "ob-f6-1",
+  "ob-k3-1",
+  "or-f6-1",
+  "ob-k1-1",
+  "ob-f9-1",
+  "ob-k2-1",
+  "or-k1-1",
+  "ob-k5-1",
+  "ob-f1a-1",
+  "or-k4-1",
+  "or-f1a-1",
+  "or-f9-1",
+  "ob-f2-1",
+  "or-f1b-1",
+  "ob-f8-1",
+  "ob-f5-1",
+  "ob-f4-1",
+  "ob-k4-1",
+  "or-f7-1",
+  "or-f2-1",
+  "or-k6-1"
+ ],
+ "config_of": {
+  "ob-k1-1": "bench/configs/agent.baseline.opus.json",
+  "ob-k1-2": "bench/configs/agent.baseline.opus.json",
+  "ob-k1-3": "bench/configs/agent.baseline.opus.json",
+  "ob-k1-4": "bench/configs/agent.baseline.opus.json",
+  "ob-k1-5": "bench/configs/agent.baseline.opus.json",
+  "ob-k1-s": "bench/configs/agent.baseline.opus.json",
+  "ob-k2-1": "bench/configs/agent.baseline.opus.json",
+  "ob-k2-2": "bench/configs/agent.baseline.opus.json",
+  "ob-k2-3": "bench/configs/agent.baseline.opus.json",
+  "ob-k2-4": "bench/configs/agent.baseline.opus.json",
+  "ob-k2-5": "bench/configs/agent.baseline.opus.json",
+  "ob-k2-s": "bench/configs/agent.baseline.opus.json",
+  "ob-k3-1": "bench/configs/agent.baseline.opus.json",
+  "ob-k3-2": "bench/configs/agent.baseline.opus.json",
+  "ob-k3-3": "bench/configs/agent.baseline.opus.json",
+  "ob-k3-4": "bench/configs/agent.baseline.opus.json",
+  "ob-k3-5": "bench/configs/agent.baseline.opus.json",
+  "ob-k3-s": "bench/configs/agent.baseline.opus.json",
+  "ob-k4-1": "bench/configs/agent.baseline.opus.json",
+  "ob-k4-2": "bench/configs/agent.baseline.opus.json",
+  "ob-k4-3": "bench/configs/agent.baseline.opus.json",
+  "ob-k4-4": "bench/configs/agent.baseline.opus.json",
+  "ob-k4-5": "bench/configs/agent.baseline.opus.json",
+  "ob-k4-s": "bench/configs/agent.baseline.opus.json",
+  "ob-k5-1": "bench/configs/agent.baseline.opus.json",
+  "ob-k5-2": "bench/configs/agent.baseline.opus.json",
+  "ob-k5-3": "bench/configs/agent.baseline.opus.json",
+  "ob-k5-4": "bench/configs/agent.baseline.opus.json",
+  "ob-k5-5": "bench/configs/agent.baseline.opus.json",
+  "ob-k5-s": "bench/configs/agent.baseline.opus.json",
+  "ob-k6-1": "bench/configs/agent.baseline.opus.json",
+  "ob-k6-2": "bench/configs/agent.baseline.opus.json",
+  "ob-k6-3": "bench/configs/agent.baseline.opus.json",
+  "ob-k6-4": "bench/configs/agent.baseline.opus.json",
+  "ob-k6-5": "bench/configs/agent.baseline.opus.json",
+  "ob-k6-s": "bench/configs/agent.baseline.opus.json",
+  "ob-f1a-1": "bench/configs/agent.baseline.opus.json",
+  "ob-f1a-2": "bench/configs/agent.baseline.opus.json",
+  "ob-f1a-3": "bench/configs/agent.baseline.opus.json",
+  "ob-f1a-4": "bench/configs/agent.baseline.opus.json",
+  "ob-f1a-5": "bench/configs/agent.baseline.opus.json",
+  "ob-f1a-s": "bench/configs/agent.baseline.opus.json",
+  "ob-f1b-1": "bench/configs/agent.baseline.opus.json",
+  "ob-f1b-2": "bench/configs/agent.baseline.opus.json",
+  "ob-f1b-3": "bench/configs/agent.baseline.opus.json",
+  "ob-f1b-4": "bench/configs/agent.baseline.opus.json",
+  "ob-f1b-5": "bench/configs/agent.baseline.opus.json",
+  "ob-f1b-s": "bench/configs/agent.baseline.opus.json",
+  "ob-f2-1": "bench/configs/agent.baseline.opus.json",
+  "ob-f2-2": "bench/configs/agent.baseline.opus.json",
+  "ob-f2-3": "bench/configs/agent.baseline.opus.json",
+  "ob-f2-4": "bench/configs/agent.baseline.opus.json",
+  "ob-f2-5": "bench/configs/agent.baseline.opus.json",
+  "ob-f2-s": "bench/configs/agent.baseline.opus.json",
+  "ob-f4-1": "bench/configs/agent.baseline.opus.json",
+  "ob-f4-2": "bench/configs/agent.baseline.opus.json",
+  "ob-f4-3": "bench/configs/agent.baseline.opus.json",
+  "ob-f4-4": "bench/configs/agent.baseline.opus.json",
+  "ob-f4-5": "bench/configs/agent.baseline.opus.json",
+  "ob-f4-s": "bench/configs/agent.baseline.opus.json",
+  "ob-f5-1": "bench/configs/agent.baseline.opus.json",
+  "ob-f5-2": "bench/configs/agent.baseline.opus.json",
+  "ob-f5-3": "bench/configs/agent.baseline.opus.json",
+  "ob-f5-4": "bench/configs/agent.baseline.opus.json",
+  "ob-f5-5": "bench/configs/agent.baseline.opus.json",
+  "ob-f5-s": "bench/configs/agent.baseline.opus.json",
+  "ob-f6-1": "bench/configs/agent.baseline.opus.json",
+  "ob-f6-2": "bench/configs/agent.baseline.opus.json",
+  "ob-f6-3": "bench/configs/agent.baseline.opus.json",
+  "ob-f6-4": "bench/configs/agent.baseline.opus.json",
+  "ob-f6-5": "bench/configs/agent.baseline.opus.json",
+  "ob-f6-s": "bench/configs/agent.baseline.opus.json",
+  "ob-f7-1": "bench/configs/agent.baseline.opus.json",
+  "ob-f7-2": "bench/configs/agent.baseline.opus.json",
+  "ob-f7-3": "bench/configs/agent.baseline.opus.json",
+  "ob-f7-4": "bench/configs/agent.baseline.opus.json",
+  "ob-f7-5": "bench/configs/agent.baseline.opus.json",
+  "ob-f7-s": "bench/configs/agent.baseline.opus.json",
+  "ob-f8-1": "bench/configs/agent.baseline.opus.json",
+  "ob-f8-2": "bench/configs/agent.baseline.opus.json",
+  "ob-f8-3": "bench/configs/agent.baseline.opus.json",
+  "ob-f8-4": "bench/configs/agent.baseline.opus.json",
+  "ob-f8-5": "bench/configs/agent.baseline.opus.json",
+  "ob-f8-s": "bench/configs/agent.baseline.opus.json",
+  "ob-f9-1": "bench/configs/agent.baseline.opus.json",
+  "ob-f9-2": "bench/configs/agent.baseline.opus.json",
+  "ob-f9-3": "bench/configs/agent.baseline.opus.json",
+  "ob-f9-4": "bench/configs/agent.baseline.opus.json",
+  "ob-f9-5": "bench/configs/agent.baseline.opus.json",
+  "ob-f9-s": "bench/configs/agent.baseline.opus.json",
+  "ob-f3-1": "bench/configs/agent.baseline.opus.helm.json",
+  "ob-f3-2": "bench/configs/agent.baseline.opus.helm.json",
+  "ob-f3-3": "bench/configs/agent.baseline.opus.helm.json",
+  "ob-f3-4": "bench/configs/agent.baseline.opus.helm.json",
+  "ob-f3-5": "bench/configs/agent.baseline.opus.helm.json",
+  "ob-f3-s": "bench/configs/agent.baseline.opus.helm.json",
+  "sb-k1-1": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k1-2": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k1-3": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k1-4": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k1-5": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k1-s": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k2-1": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k2-2": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k2-3": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k2-4": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k2-5": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k2-s": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k3-1": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k3-2": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k3-3": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k3-4": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k3-5": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k3-s": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k4-1": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k4-2": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k4-3": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k4-4": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k4-5": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k4-s": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k5-1": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k5-2": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k5-3": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k5-4": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k5-5": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k5-s": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k6-1": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k6-2": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k6-3": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k6-4": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k6-5": "bench/configs/agent.baseline.sonnet.json",
+  "sb-k6-s": "bench/configs/agent.baseline.sonnet.json",
+  "xb-k1-1": "bench/configs/agent.baseline.opus.observer.json",
+  "xb-k1-2": "bench/configs/agent.baseline.opus.observer.json",
+  "xb-k1-s": "bench/configs/agent.baseline.opus.observer.json",
+  "xb-k2-1": "bench/configs/agent.baseline.opus.observer.json",
+  "xb-k2-2": "bench/configs/agent.baseline.opus.observer.json",
+  "xb-k2-s": "bench/configs/agent.baseline.opus.observer.json",
+  "xb-k3-1": "bench/configs/agent.baseline.opus.observer.json",
+  "xb-k3-2": "bench/configs/agent.baseline.opus.observer.json",
+  "xb-k3-s": "bench/configs/agent.baseline.opus.observer.json",
+  "xb-k4-1": "bench/configs/agent.baseline.opus.observer.json",
+  "xb-k4-2": "bench/configs/agent.baseline.opus.observer.json",
+  "xb-k4-s": "bench/configs/agent.baseline.opus.observer.json",
+  "xb-k5-1": "bench/configs/agent.baseline.opus.observer.json",
+  "xb-k5-2": "bench/configs/agent.baseline.opus.observer.json",
+  "xb-k5-s": "bench/configs/agent.baseline.opus.observer.json",
+  "xb-k6-1": "bench/configs/agent.baseline.opus.observer.json",
+  "xb-k6-2": "bench/configs/agent.baseline.opus.observer.json",
+  "xb-k6-s": "bench/configs/agent.baseline.opus.observer.json",
+  "or-k1-1": "bench/configs/agent.research.opus.json",
+  "or-k1-2": "bench/configs/agent.research.opus.json",
+  "or-k1-3": "bench/configs/agent.research.opus.json",
+  "or-k1-4": "bench/configs/agent.research.opus.json",
+  "or-k1-5": "bench/configs/agent.research.opus.json",
+  "or-k1-s": "bench/configs/agent.research.opus.json",
+  "or-k2-1": "bench/configs/agent.research.opus.json",
+  "or-k2-2": "bench/configs/agent.research.opus.json",
+  "or-k2-3": "bench/configs/agent.research.opus.json",
+  "or-k2-4": "bench/configs/agent.research.opus.json",
+  "or-k2-5": "bench/configs/agent.research.opus.json",
+  "or-k2-s": "bench/configs/agent.research.opus.json",
+  "or-k3-1": "bench/configs/agent.research.opus.json",
+  "or-k3-2": "bench/configs/agent.research.opus.json",
+  "or-k3-3": "bench/configs/agent.research.opus.json",
+  "or-k3-4": "bench/configs/agent.research.opus.json",
+  "or-k3-5": "bench/configs/agent.research.opus.json",
+  "or-k3-s": "bench/configs/agent.research.opus.json",
+  "or-k4-1": "bench/configs/agent.research.opus.json",
+  "or-k4-2": "bench/configs/agent.research.opus.json",
+  "or-k4-3": "bench/configs/agent.research.opus.json",
+  "or-k4-4": "bench/configs/agent.research.opus.json",
+  "or-k4-5": "bench/configs/agent.research.opus.json",
+  "or-k4-s": "bench/configs/agent.research.opus.json",
+  "or-k5-1": "bench/configs/agent.research.opus.json",
+  "or-k5-2": "bench/configs/agent.research.opus.json",
+  "or-k5-3": "bench/configs/agent.research.opus.json",
+  "or-k5-4": "bench/configs/agent.research.opus.json",
+  "or-k5-5": "bench/configs/agent.research.opus.json",
+  "or-k5-s": "bench/configs/agent.research.opus.json",
+  "or-k6-1": "bench/configs/agent.research.opus.json",
+  "or-k6-2": "bench/configs/agent.research.opus.json",
+  "or-k6-3": "bench/configs/agent.research.opus.json",
+  "or-k6-4": "bench/configs/agent.research.opus.json",
+  "or-k6-5": "bench/configs/agent.research.opus.json",
+  "or-k6-s": "bench/configs/agent.research.opus.json",
+  "or-f1a-1": "bench/configs/agent.research.opus.json",
+  "or-f1a-2": "bench/configs/agent.research.opus.json",
+  "or-f1a-3": "bench/configs/agent.research.opus.json",
+  "or-f1a-4": "bench/configs/agent.research.opus.json",
+  "or-f1a-5": "bench/configs/agent.research.opus.json",
+  "or-f1a-s": "bench/configs/agent.research.opus.json",
+  "or-f1b-1": "bench/configs/agent.research.opus.json",
+  "or-f1b-2": "bench/configs/agent.research.opus.json",
+  "or-f1b-3": "bench/configs/agent.research.opus.json",
+  "or-f1b-4": "bench/configs/agent.research.opus.json",
+  "or-f1b-5": "bench/configs/agent.research.opus.json",
+  "or-f1b-s": "bench/configs/agent.research.opus.json",
+  "or-f2-1": "bench/configs/agent.research.opus.json",
+  "or-f2-2": "bench/configs/agent.research.opus.json",
+  "or-f2-3": "bench/configs/agent.research.opus.json",
+  "or-f2-4": "bench/configs/agent.research.opus.json",
+  "or-f2-5": "bench/configs/agent.research.opus.json",
+  "or-f2-s": "bench/configs/agent.research.opus.json",
+  "or-f4-1": "bench/configs/agent.research.opus.json",
+  "or-f4-2": "bench/configs/agent.research.opus.json",
+  "or-f4-3": "bench/configs/agent.research.opus.json",
+  "or-f4-4": "bench/configs/agent.research.opus.json",
+  "or-f4-5": "bench/configs/agent.research.opus.json",
+  "or-f4-s": "bench/configs/agent.research.opus.json",
+  "or-f5-1": "bench/configs/agent.research.opus.json",
+  "or-f5-2": "bench/configs/agent.research.opus.json",
+  "or-f5-3": "bench/configs/agent.research.opus.json",
+  "or-f5-4": "bench/configs/agent.research.opus.json",
+  "or-f5-5": "bench/configs/agent.research.opus.json",
+  "or-f5-s": "bench/configs/agent.research.opus.json",
+  "or-f6-1": "bench/configs/agent.research.opus.json",
+  "or-f6-2": "bench/configs/agent.research.opus.json",
+  "or-f6-3": "bench/configs/agent.research.opus.json",
+  "or-f6-4": "bench/configs/agent.research.opus.json",
+  "or-f6-5": "bench/configs/agent.research.opus.json",
+  "or-f6-s": "bench/configs/agent.research.opus.json",
+  "or-f7-1": "bench/configs/agent.research.opus.json",
+  "or-f7-2": "bench/configs/agent.research.opus.json",
+  "or-f7-3": "bench/configs/agent.research.opus.json",
+  "or-f7-4": "bench/configs/agent.research.opus.json",
+  "or-f7-5": "bench/configs/agent.research.opus.json",
+  "or-f7-s": "bench/configs/agent.research.opus.json",
+  "or-f8-1": "bench/configs/agent.research.opus.json",
+  "or-f8-2": "bench/configs/agent.research.opus.json",
+  "or-f8-3": "bench/configs/agent.research.opus.json",
+  "or-f8-4": "bench/configs/agent.research.opus.json",
+  "or-f8-5": "bench/configs/agent.research.opus.json",
+  "or-f8-s": "bench/configs/agent.research.opus.json",
+  "or-f9-1": "bench/configs/agent.research.opus.json",
+  "or-f9-2": "bench/configs/agent.research.opus.json",
+  "or-f9-3": "bench/configs/agent.research.opus.json",
+  "or-f9-4": "bench/configs/agent.research.opus.json",
+  "or-f9-5": "bench/configs/agent.research.opus.json",
+  "or-f9-s": "bench/configs/agent.research.opus.json",
+  "or-f3-1": "bench/configs/agent.research.opus.helm.json",
+  "or-f3-2": "bench/configs/agent.research.opus.helm.json",
+  "or-f3-3": "bench/configs/agent.research.opus.helm.json",
+  "or-f3-4": "bench/configs/agent.research.opus.helm.json",
+  "or-f3-5": "bench/configs/agent.research.opus.helm.json",
+  "or-f3-s": "bench/configs/agent.research.opus.helm.json",
+  "sr-k1-1": "bench/configs/agent.research.sonnet.json",
+  "sr-k1-2": "bench/configs/agent.research.sonnet.json",
+  "sr-k1-3": "bench/configs/agent.research.sonnet.json",
+  "sr-k1-4": "bench/configs/agent.research.sonnet.json",
+  "sr-k1-5": "bench/configs/agent.research.sonnet.json",
+  "sr-k1-s": "bench/configs/agent.research.sonnet.json",
+  "sr-k2-1": "bench/configs/agent.research.sonnet.json",
+  "sr-k2-2": "bench/configs/agent.research.sonnet.json",
+  "sr-k2-3": "bench/configs/agent.research.sonnet.json",
+  "sr-k2-4": "bench/configs/agent.research.sonnet.json",
+  "sr-k2-5": "bench/configs/agent.research.sonnet.json",
+  "sr-k2-s": "bench/configs/agent.research.sonnet.json",
+  "sr-k3-1": "bench/configs/agent.research.sonnet.json",
+  "sr-k3-2": "bench/configs/agent.research.sonnet.json",
+  "sr-k3-3": "bench/configs/agent.research.sonnet.json",
+  "sr-k3-4": "bench/configs/agent.research.sonnet.json",
+  "sr-k3-5": "bench/configs/agent.research.sonnet.json",
+  "sr-k3-s": "bench/configs/agent.research.sonnet.json",
+  "sr-k4-1": "bench/configs/agent.research.sonnet.json",
+  "sr-k4-2": "bench/configs/agent.research.sonnet.json",
+  "sr-k4-3": "bench/configs/agent.research.sonnet.json",
+  "sr-k4-4": "bench/configs/agent.research.sonnet.json",
+  "sr-k4-5": "bench/configs/agent.research.sonnet.json",
+  "sr-k4-s": "bench/configs/agent.research.sonnet.json",
+  "sr-k5-1": "bench/configs/agent.research.sonnet.json",
+  "sr-k5-2": "bench/configs/agent.research.sonnet.json",
+  "sr-k5-3": "bench/configs/agent.research.sonnet.json",
+  "sr-k5-4": "bench/configs/agent.research.sonnet.json",
+  "sr-k5-5": "bench/configs/agent.research.sonnet.json",
+  "sr-k5-s": "bench/configs/agent.research.sonnet.json",
+  "sr-k6-1": "bench/configs/agent.research.sonnet.json",
+  "sr-k6-2": "bench/configs/agent.research.sonnet.json",
+  "sr-k6-3": "bench/configs/agent.research.sonnet.json",
+  "sr-k6-4": "bench/configs/agent.research.sonnet.json",
+  "sr-k6-5": "bench/configs/agent.research.sonnet.json",
+  "sr-k6-s": "bench/configs/agent.research.sonnet.json",
+  "xr-k1-1": "bench/configs/agent.research.opus.observer.json",
+  "xr-k1-2": "bench/configs/agent.research.opus.observer.json",
+  "xr-k1-s": "bench/configs/agent.research.opus.observer.json",
+  "xr-k2-1": "bench/configs/agent.research.opus.observer.json",
+  "xr-k2-2": "bench/configs/agent.research.opus.observer.json",
+  "xr-k2-s": "bench/configs/agent.research.opus.observer.json",
+  "xr-k3-1": "bench/configs/agent.research.opus.observer.json",
+  "xr-k3-2": "bench/configs/agent.research.opus.observer.json",
+  "xr-k3-s": "bench/configs/agent.research.opus.observer.json",
+  "xr-k4-1": "bench/configs/agent.research.opus.observer.json",
+  "xr-k4-2": "bench/configs/agent.research.opus.observer.json",
+  "xr-k4-s": "bench/configs/agent.research.opus.observer.json",
+  "xr-k5-1": "bench/configs/agent.research.opus.observer.json",
+  "xr-k5-2": "bench/configs/agent.research.opus.observer.json",
+  "xr-k5-s": "bench/configs/agent.research.opus.observer.json",
+  "xr-k6-1": "bench/configs/agent.research.opus.observer.json",
+  "xr-k6-2": "bench/configs/agent.research.opus.observer.json",
+  "xr-k6-s": "bench/configs/agent.research.opus.observer.json"
+ },
+ "task_of": {
+  "ob-k1-1": "K1",
+  "ob-k1-2": "K1",
+  "ob-k1-3": "K1",
+  "ob-k1-4": "K1",
+  "ob-k1-5": "K1",
+  "ob-k1-s": "K1",
+  "ob-k2-1": "K2",
+  "ob-k2-2": "K2",
+  "ob-k2-3": "K2",
+  "ob-k2-4": "K2",
+  "ob-k2-5": "K2",
+  "ob-k2-s": "K2",
+  "ob-k3-1": "K3",
+  "ob-k3-2": "K3",
+  "ob-k3-3": "K3",
+  "ob-k3-4": "K3",
+  "ob-k3-5": "K3",
+  "ob-k3-s": "K3",
+  "ob-k4-1": "K4",
+  "ob-k4-2": "K4",
+  "ob-k4-3": "K4",
+  "ob-k4-4": "K4",
+  "ob-k4-5": "K4",
+  "ob-k4-s": "K4",
+  "ob-k5-1": "K5",
+  "ob-k5-2": "K5",
+  "ob-k5-3": "K5",
+  "ob-k5-4": "K5",
+  "ob-k5-5": "K5",
+  "ob-k5-s": "K5",
+  "ob-k6-1": "K6",
+  "ob-k6-2": "K6",
+  "ob-k6-3": "K6",
+  "ob-k6-4": "K6",
+  "ob-k6-5": "K6",
+  "ob-k6-s": "K6",
+  "ob-f1a-1": "F1a",
+  "ob-f1a-2": "F1a",
+  "ob-f1a-3": "F1a",
+  "ob-f1a-4": "F1a",
+  "ob-f1a-5": "F1a",
+  "ob-f1a-s": "F1a",
+  "ob-f1b-1": "F1b",
+  "ob-f1b-2": "F1b",
+  "ob-f1b-3": "F1b",
+  "ob-f1b-4": "F1b",
+  "ob-f1b-5": "F1b",
+  "ob-f1b-s": "F1b",
+  "ob-f2-1": "F2",
+  "ob-f2-2": "F2",
+  "ob-f2-3": "F2",
+  "ob-f2-4": "F2",
+  "ob-f2-5": "F2",
+  "ob-f2-s": "F2",
+  "ob-f4-1": "F4",
+  "ob-f4-2": "F4",
+  "ob-f4-3": "F4",
+  "ob-f4-4": "F4",
+  "ob-f4-5": "F4",
+  "ob-f4-s": "F4",
+  "ob-f5-1": "F5",
+  "ob-f5-2": "F5",
+  "ob-f5-3": "F5",
+  "ob-f5-4": "F5",
+  "ob-f5-5": "F5",
+  "ob-f5-s": "F5",
+  "ob-f6-1": "F6",
+  "ob-f6-2": "F6",
+  "ob-f6-3": "F6",
+  "ob-f6-4": "F6",
+  "ob-f6-5": "F6",
+  "ob-f6-s": "F6",
+  "ob-f7-1": "F7",
+  "ob-f7-2": "F7",
+  "ob-f7-3": "F7",
+  "ob-f7-4": "F7",
+  "ob-f7-5": "F7",
+  "ob-f7-s": "F7",
+  "ob-f8-1": "F8",
+  "ob-f8-2": "F8",
+  "ob-f8-3": "F8",
+  "ob-f8-4": "F8",
+  "ob-f8-5": "F8",
+  "ob-f8-s": "F8",
+  "ob-f9-1": "F9",
+  "ob-f9-2": "F9",
+  "ob-f9-3": "F9",
+  "ob-f9-4": "F9",
+  "ob-f9-5": "F9",
+  "ob-f9-s": "F9",
+  "ob-f3-1": "F3",
+  "ob-f3-2": "F3",
+  "ob-f3-3": "F3",
+  "ob-f3-4": "F3",
+  "ob-f3-5": "F3",
+  "ob-f3-s": "F3",
+  "sb-k1-1": "K1",
+  "sb-k1-2": "K1",
+  "sb-k1-3": "K1",
+  "sb-k1-4": "K1",
+  "sb-k1-5": "K1",
+  "sb-k1-s": "K1",
+  "sb-k2-1": "K2",
+  "sb-k2-2": "K2",
+  "sb-k2-3": "K2",
+  "sb-k2-4": "K2",
+  "sb-k2-5": "K2",
+  "sb-k2-s": "K2",
+  "sb-k3-1": "K3",
+  "sb-k3-2": "K3",
+  "sb-k3-3": "K3",
+  "sb-k3-4": "K3",
+  "sb-k3-5": "K3",
+  "sb-k3-s": "K3",
+  "sb-k4-1": "K4",
+  "sb-k4-2": "K4",
+  "sb-k4-3": "K4",
+  "sb-k4-4": "K4",
+  "sb-k4-5": "K4",
+  "sb-k4-s": "K4",
+  "sb-k5-1": "K5",
+  "sb-k5-2": "K5",
+  "sb-k5-3": "K5",
+  "sb-k5-4": "K5",
+  "sb-k5-5": "K5",
+  "sb-k5-s": "K5",
+  "sb-k6-1": "K6",
+  "sb-k6-2": "K6",
+  "sb-k6-3": "K6",
+  "sb-k6-4": "K6",
+  "sb-k6-5": "K6",
+  "sb-k6-s": "K6",
+  "xb-k1-1": "K1",
+  "xb-k1-2": "K1",
+  "xb-k1-s": "K1",
+  "xb-k2-1": "K2",
+  "xb-k2-2": "K2",
+  "xb-k2-s": "K2",
+  "xb-k3-1": "K3",
+  "xb-k3-2": "K3",
+  "xb-k3-s": "K3",
+  "xb-k4-1": "K4",
+  "xb-k4-2": "K4",
+  "xb-k4-s": "K4",
+  "xb-k5-1": "K5",
+  "xb-k5-2": "K5",
+  "xb-k5-s": "K5",
+  "xb-k6-1": "K6",
+  "xb-k6-2": "K6",
+  "xb-k6-s": "K6",
+  "or-k1-1": "K1",
+  "or-k1-2": "K1",
+  "or-k1-3": "K1",
+  "or-k1-4": "K1",
+  "or-k1-5": "K1",
+  "or-k1-s": "K1",
+  "or-k2-1": "K2",
+  "or-k2-2": "K2",
+  "or-k2-3": "K2",
+  "or-k2-4": "K2",
+  "or-k2-5": "K2",
+  "or-k2-s": "K2",
+  "or-k3-1": "K3",
+  "or-k3-2": "K3",
+  "or-k3-3": "K3",
+  "or-k3-4": "K3",
+  "or-k3-5": "K3",
+  "or-k3-s": "K3",
+  "or-k4-1": "K4",
+  "or-k4-2": "K4",
+  "or-k4-3": "K4",
+  "or-k4-4": "K4",
+  "or-k4-5": "K4",
+  "or-k4-s": "K4",
+  "or-k5-1": "K5",
+  "or-k5-2": "K5",
+  "or-k5-3": "K5",
+  "or-k5-4": "K5",
+  "or-k5-5": "K5",
+  "or-k5-s": "K5",
+  "or-k6-1": "K6",
+  "or-k6-2": "K6",
+  "or-k6-3": "K6",
+  "or-k6-4": "K6",
+  "or-k6-5": "K6",
+  "or-k6-s": "K6",
+  "or-f1a-1": "F1a",
+  "or-f1a-2": "F1a",
+  "or-f1a-3": "F1a",
+  "or-f1a-4": "F1a",
+  "or-f1a-5": "F1a",
+  "or-f1a-s": "F1a",
+  "or-f1b-1": "F1b",
+  "or-f1b-2": "F1b",
+  "or-f1b-3": "F1b",
+  "or-f1b-4": "F1b",
+  "or-f1b-5": "F1b",
+  "or-f1b-s": "F1b",
+  "or-f2-1": "F2",
+  "or-f2-2": "F2",
+  "or-f2-3": "F2",
+  "or-f2-4": "F2",
+  "or-f2-5": "F2",
+  "or-f2-s": "F2",
+  "or-f4-1": "F4",
+  "or-f4-2": "F4",
+  "or-f4-3": "F4",
+  "or-f4-4": "F4",
+  "or-f4-5": "F4",
+  "or-f4-s": "F4",
+  "or-f5-1": "F5",
+  "or-f5-2": "F5",
+  "or-f5-3": "F5",
+  "or-f5-4": "F5",
+  "or-f5-5": "F5",
+  "or-f5-s": "F5",
+  "or-f6-1": "F6",
+  "or-f6-2": "F6",
+  "or-f6-3": "F6",
+  "or-f6-4": "F6",
+  "or-f6-5": "F6",
+  "or-f6-s": "F6",
+  "or-f7-1": "F7",
+  "or-f7-2": "F7",
+  "or-f7-3": "F7",
+  "or-f7-4": "F7",
+  "or-f7-5": "F7",
+  "or-f7-s": "F7",
+  "or-f8-1": "F8",
+  "or-f8-2": "F8",
+  "or-f8-3": "F8",
+  "or-f8-4": "F8",
+  "or-f8-5": "F8",
+  "or-f8-s": "F8",
+  "or-f9-1": "F9",
+  "or-f9-2": "F9",
+  "or-f9-3": "F9",
+  "or-f9-4": "F9",
+  "or-f9-5": "F9",
+  "or-f9-s": "F9",
+  "or-f3-1": "F3",
+  "or-f3-2": "F3",
+  "or-f3-3": "F3",
+  "or-f3-4": "F3",
+  "or-f3-5": "F3",
+  "or-f3-s": "F3",
+  "sr-k1-1": "K1",
+  "sr-k1-2": "K1",
+  "sr-k1-3": "K1",
+  "sr-k1-4": "K1",
+  "sr-k1-5": "K1",
+  "sr-k1-s": "K1",
+  "sr-k2-1": "K2",
+  "sr-k2-2": "K2",
+  "sr-k2-3": "K2",
+  "sr-k2-4": "K2",
+  "sr-k2-5": "K2",
+  "sr-k2-s": "K2",
+  "sr-k3-1": "K3",
+  "sr-k3-2": "K3",
+  "sr-k3-3": "K3",
+  "sr-k3-4": "K3",
+  "sr-k3-5": "K3",
+  "sr-k3-s": "K3",
+  "sr-k4-1": "K4",
+  "sr-k4-2": "K4",
+  "sr-k4-3": "K4",
+  "sr-k4-4": "K4",
+  "sr-k4-5": "K4",
+  "sr-k4-s": "K4",
+  "sr-k5-1": "K5",
+  "sr-k5-2": "K5",
+  "sr-k5-3": "K5",
+  "sr-k5-4": "K5",
+  "sr-k5-5": "K5",
+  "sr-k5-s": "K5",
+  "sr-k6-1": "K6",
+  "sr-k6-2": "K6",
+  "sr-k6-3": "K6",
+  "sr-k6-4": "K6",
+  "sr-k6-5": "K6",
+  "sr-k6-s": "K6",
+  "xr-k1-1": "K1",
+  "xr-k1-2": "K1",
+  "xr-k1-s": "K1",
+  "xr-k2-1": "K2",
+  "xr-k2-2": "K2",
+  "xr-k2-s": "K2",
+  "xr-k3-1": "K3",
+  "xr-k3-2": "K3",
+  "xr-k3-s": "K3",
+  "xr-k4-1": "K4",
+  "xr-k4-2": "K4",
+  "xr-k4-s": "K4",
+  "xr-k5-1": "K5",
+  "xr-k5-2": "K5",
+  "xr-k5-s": "K5",
+  "xr-k6-1": "K6",
+  "xr-k6-2": "K6",
+  "xr-k6-s": "K6"
+ },
+ "build_of": {
+  "ob-k1-1": "baseline",
+  "ob-k1-2": "baseline",
+  "ob-k1-3": "baseline",
+  "ob-k1-4": "baseline",
+  "ob-k1-5": "baseline",
+  "ob-k1-s": "baseline",
+  "ob-k2-1": "baseline",
+  "ob-k2-2": "baseline",
+  "ob-k2-3": "baseline",
+  "ob-k2-4": "baseline",
+  "ob-k2-5": "baseline",
+  "ob-k2-s": "baseline",
+  "ob-k3-1": "baseline",
+  "ob-k3-2": "baseline",
+  "ob-k3-3": "baseline",
+  "ob-k3-4": "baseline",
+  "ob-k3-5": "baseline",
+  "ob-k3-s": "baseline",
+  "ob-k4-1": "baseline",
+  "ob-k4-2": "baseline",
+  "ob-k4-3": "baseline",
+  "ob-k4-4": "baseline",
+  "ob-k4-5": "baseline",
+  "ob-k4-s": "baseline",
+  "ob-k5-1": "baseline",
+  "ob-k5-2": "baseline",
+  "ob-k5-3": "baseline",
+  "ob-k5-4": "baseline",
+  "ob-k5-5": "baseline",
+  "ob-k5-s": "baseline",
+  "ob-k6-1": "baseline",
+  "ob-k6-2": "baseline",
+  "ob-k6-3": "baseline",
+  "ob-k6-4": "baseline",
+  "ob-k6-5": "baseline",
+  "ob-k6-s": "baseline",
+  "ob-f1a-1": "baseline",
+  "ob-f1a-2": "baseline",
+  "ob-f1a-3": "baseline",
+  "ob-f1a-4": "baseline",
+  "ob-f1a-5": "baseline",
+  "ob-f1a-s": "baseline",
+  "ob-f1b-1": "baseline",
+  "ob-f1b-2": "baseline",
+  "ob-f1b-3": "baseline",
+  "ob-f1b-4": "baseline",
+  "ob-f1b-5": "baseline",
+  "ob-f1b-s": "baseline",
+  "ob-f2-1": "baseline",
+  "ob-f2-2": "baseline",
+  "ob-f2-3": "baseline",
+  "ob-f2-4": "baseline",
+  "ob-f2-5": "baseline",
+  "ob-f2-s": "baseline",
+  "ob-f4-1": "baseline",
+  "ob-f4-2": "baseline",
+  "ob-f4-3": "baseline",
+  "ob-f4-4": "baseline",
+  "ob-f4-5": "baseline",
+  "ob-f4-s": "baseline",
+  "ob-f5-1": "baseline",
+  "ob-f5-2": "baseline",
+  "ob-f5-3": "baseline",
+  "ob-f5-4": "baseline",
+  "ob-f5-5": "baseline",
+  "ob-f5-s": "baseline",
+  "ob-f6-1": "baseline",
+  "ob-f6-2": "baseline",
+  "ob-f6-3": "baseline",
+  "ob-f6-4": "baseline",
+  "ob-f6-5": "baseline",
+  "ob-f6-s": "baseline",
+  "ob-f7-1": "baseline",
+  "ob-f7-2": "baseline",
+  "ob-f7-3": "baseline",
+  "ob-f7-4": "baseline",
+  "ob-f7-5": "baseline",
+  "ob-f7-s": "baseline",
+  "ob-f8-1": "baseline",
+  "ob-f8-2": "baseline",
+  "ob-f8-3": "baseline",
+  "ob-f8-4": "baseline",
+  "ob-f8-5": "baseline",
+  "ob-f8-s": "baseline",
+  "ob-f9-1": "baseline",
+  "ob-f9-2": "baseline",
+  "ob-f9-3": "baseline",
+  "ob-f9-4": "baseline",
+  "ob-f9-5": "baseline",
+  "ob-f9-s": "baseline",
+  "ob-f3-1": "baseline",
+  "ob-f3-2": "baseline",
+  "ob-f3-3": "baseline",
+  "ob-f3-4": "baseline",
+  "ob-f3-5": "baseline",
+  "ob-f3-s": "baseline",
+  "sb-k1-1": "baseline",
+  "sb-k1-2": "baseline",
+  "sb-k1-3": "baseline",
+  "sb-k1-4": "baseline",
+  "sb-k1-5": "baseline",
+  "sb-k1-s": "baseline",
+  "sb-k2-1": "baseline",
+  "sb-k2-2": "baseline",
+  "sb-k2-3": "baseline",
+  "sb-k2-4": "baseline",
+  "sb-k2-5": "baseline",
+  "sb-k2-s": "baseline",
+  "sb-k3-1": "baseline",
+  "sb-k3-2": "baseline",
+  "sb-k3-3": "baseline",
+  "sb-k3-4": "baseline",
+  "sb-k3-5": "baseline",
+  "sb-k3-s": "baseline",
+  "sb-k4-1": "baseline",
+  "sb-k4-2": "baseline",
+  "sb-k4-3": "baseline",
+  "sb-k4-4": "baseline",
+  "sb-k4-5": "baseline",
+  "sb-k4-s": "baseline",
+  "sb-k5-1": "baseline",
+  "sb-k5-2": "baseline",
+  "sb-k5-3": "baseline",
+  "sb-k5-4": "baseline",
+  "sb-k5-5": "baseline",
+  "sb-k5-s": "baseline",
+  "sb-k6-1": "baseline",
+  "sb-k6-2": "baseline",
+  "sb-k6-3": "baseline",
+  "sb-k6-4": "baseline",
+  "sb-k6-5": "baseline",
+  "sb-k6-s": "baseline",
+  "xb-k1-1": "baseline",
+  "xb-k1-2": "baseline",
+  "xb-k1-s": "baseline",
+  "xb-k2-1": "baseline",
+  "xb-k2-2": "baseline",
+  "xb-k2-s": "baseline",
+  "xb-k3-1": "baseline",
+  "xb-k3-2": "baseline",
+  "xb-k3-s": "baseline",
+  "xb-k4-1": "baseline",
+  "xb-k4-2": "baseline",
+  "xb-k4-s": "baseline",
+  "xb-k5-1": "baseline",
+  "xb-k5-2": "baseline",
+  "xb-k5-s": "baseline",
+  "xb-k6-1": "baseline",
+  "xb-k6-2": "baseline",
+  "xb-k6-s": "baseline",
+  "or-k1-1": "research",
+  "or-k1-2": "research",
+  "or-k1-3": "research",
+  "or-k1-4": "research",
+  "or-k1-5": "research",
+  "or-k1-s": "research",
+  "or-k2-1": "research",
+  "or-k2-2": "research",
+  "or-k2-3": "research",
+  "or-k2-4": "research",
+  "or-k2-5": "research",
+  "or-k2-s": "research",
+  "or-k3-1": "research",
+  "or-k3-2": "research",
+  "or-k3-3": "research",
+  "or-k3-4": "research",
+  "or-k3-5": "research",
+  "or-k3-s": "research",
+  "or-k4-1": "research",
+  "or-k4-2": "research",
+  "or-k4-3": "research",
+  "or-k4-4": "research",
+  "or-k4-5": "research",
+  "or-k4-s": "research",
+  "or-k5-1": "research",
+  "or-k5-2": "research",
+  "or-k5-3": "research",
+  "or-k5-4": "research",
+  "or-k5-5": "research",
+  "or-k5-s": "research",
+  "or-k6-1": "research",
+  "or-k6-2": "research",
+  "or-k6-3": "research",
+  "or-k6-4": "research",
+  "or-k6-5": "research",
+  "or-k6-s": "research",
+  "or-f1a-1": "research",
+  "or-f1a-2": "research",
+  "or-f1a-3": "research",
+  "or-f1a-4": "research",
+  "or-f1a-5": "research",
+  "or-f1a-s": "research",
+  "or-f1b-1": "research",
+  "or-f1b-2": "research",
+  "or-f1b-3": "research",
+  "or-f1b-4": "research",
+  "or-f1b-5": "research",
+  "or-f1b-s": "research",
+  "or-f2-1": "research",
+  "or-f2-2": "research",
+  "or-f2-3": "research",
+  "or-f2-4": "research",
+  "or-f2-5": "research",
+  "or-f2-s": "research",
+  "or-f4-1": "research",
+  "or-f4-2": "research",
+  "or-f4-3": "research",
+  "or-f4-4": "research",
+  "or-f4-5": "research",
+  "or-f4-s": "research",
+  "or-f5-1": "research",
+  "or-f5-2": "research",
+  "or-f5-3": "research",
+  "or-f5-4": "research",
+  "or-f5-5": "research",
+  "or-f5-s": "research",
+  "or-f6-1": "research",
+  "or-f6-2": "research",
+  "or-f6-3": "research",
+  "or-f6-4": "research",
+  "or-f6-5": "research",
+  "or-f6-s": "research",
+  "or-f7-1": "research",
+  "or-f7-2": "research",
+  "or-f7-3": "research",
+  "or-f7-4": "research",
+  "or-f7-5": "research",
+  "or-f7-s": "research",
+  "or-f8-1": "research",
+  "or-f8-2": "research",
+  "or-f8-3": "research",
+  "or-f8-4": "research",
+  "or-f8-5": "research",
+  "or-f8-s": "research",
+  "or-f9-1": "research",
+  "or-f9-2": "research",
+  "or-f9-3": "research",
+  "or-f9-4": "research",
+  "or-f9-5": "research",
+  "or-f9-s": "research",
+  "or-f3-1": "research",
+  "or-f3-2": "research",
+  "or-f3-3": "research",
+  "or-f3-4": "research",
+  "or-f3-5": "research",
+  "or-f3-s": "research",
+  "sr-k1-1": "research",
+  "sr-k1-2": "research",
+  "sr-k1-3": "research",
+  "sr-k1-4": "research",
+  "sr-k1-5": "research",
+  "sr-k1-s": "research",
+  "sr-k2-1": "research",
+  "sr-k2-2": "research",
+  "sr-k2-3": "research",
+  "sr-k2-4": "research",
+  "sr-k2-5": "research",
+  "sr-k2-s": "research",
+  "sr-k3-1": "research",
+  "sr-k3-2": "research",
+  "sr-k3-3": "research",
+  "sr-k3-4": "research",
+  "sr-k3-5": "research",
+  "sr-k3-s": "research",
+  "sr-k4-1": "research",
+  "sr-k4-2": "research",
+  "sr-k4-3": "research",
+  "sr-k4-4": "research",
+  "sr-k4-5": "research",
+  "sr-k4-s": "research",
+  "sr-k5-1": "research",
+  "sr-k5-2": "research",
+  "sr-k5-3": "research",
+  "sr-k5-4": "research",
+  "sr-k5-5": "research",
+  "sr-k5-s": "research",
+  "sr-k6-1": "research",
+  "sr-k6-2": "research",
+  "sr-k6-3": "research",
+  "sr-k6-4": "research",
+  "sr-k6-5": "research",
+  "sr-k6-s": "research",
+  "xr-k1-1": "research",
+  "xr-k1-2": "research",
+  "xr-k1-s": "research",
+  "xr-k2-1": "research",
+  "xr-k2-2": "research",
+  "xr-k2-s": "research",
+  "xr-k3-1": "research",
+  "xr-k3-2": "research",
+  "xr-k3-s": "research",
+  "xr-k4-1": "research",
+  "xr-k4-2": "research",
+  "xr-k4-s": "research",
+  "xr-k5-1": "research",
+  "xr-k5-2": "research",
+  "xr-k5-s": "research",
+  "xr-k6-1": "research",
+  "xr-k6-2": "research",
+  "xr-k6-s": "research"
+ },
+ "tags": {
+  "K1": [
+   "waits",
+   "smaller_results"
+  ],
+  "K2": [
+   "edit_round_trips",
+   "smaller_results",
+   "truthful_results"
+  ],
+  "K3": [
+   "smaller_results",
+   "waits"
+  ],
+  "K4": [
+   "edit_round_trips",
+   "waits"
+  ],
+  "K5": [
+   "batch",
+   "smaller_results"
+  ],
+  "K6": [
+   "batch",
+   "multi_get",
+   "truthful_results",
+   "waits"
+  ],
+  "F1a": [
+   "smaller_results",
+   "waits"
+  ],
+  "F1b": [
+   "bug_fixes",
+   "truthful_results"
+  ],
+  "F2": [
+   "truthful_results",
+   "waits",
+   "bug_fixes"
+  ],
+  "F3": [
+   "bug_fixes",
+   "truthful_results",
+   "waits"
+  ],
+  "F4": [
+   "batch",
+   "multi_get",
+   "truthful_results"
+  ],
+  "F5": [
+   "truthful_results"
+  ],
+  "F6": [
+   "batch"
+  ],
+  "F7": [
+   "multi_get",
+   "smaller_results"
+  ],
+  "F8": [
+   "truthful_results"
+  ],
+  "F9": [
+   "edit_round_trips",
+   "truthful_results"
+  ]
+ },
+ "set_of": {
+  "K1": "A",
+  "K2": "A",
+  "K3": "A",
+  "K4": "A",
+  "K5": "A",
+  "K6": "A",
+  "F1a": "B",
+  "F1b": "B",
+  "F2": "B",
+  "F3": "B",
+  "F4": "B",
+  "F5": "B",
+  "F6": "B",
+  "F7": "B",
+  "F8": "B",
+  "F9": "B"
+ }
+}

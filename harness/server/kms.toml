@@ -1,0 +1,13 @@
+# kubernetes-mcp-server runtime settings for the audit (v0.1.x takes runtime settings from TOML only; the CLI
+# keeps --config and --config-dir: docs/configuration-changes.md at v0.1.2). Transport: stdio (no `port`).
+# Checked by `node lib/target.mjs check-server`: allowed toolsets core/config/helm, no telemetry, TLS, OAuth or HTTP.
+#
+# Baseline = what a default install gets: the default toolsets, stated explicitly so the catalog is pinned.
+# `kubeconfig` is left empty on purpose: client-go then falls back to $KUBECONFIG, which the launcher sets to
+# KMS_KUBECONFIG (the ServiceAccount identity), with HOME set to SERVER_HOME so ~/.kube can never be found.
+# Flag-matrix variants (read_only, disable_destructive, helm, tekton, kubevirt) are whole TOML files in
+# server/variants/; each gets its own catalog snapshot (mcp-catalog-snap) before the freeze. mcp-audit-probe (since
+# 831f0e0a) takes them as named config-file variants (target server.variants, --variant NAME or the experiment's
+# `variant:`), hashed into every run result. Keep `kubeconfig` unset in every variant: the probe's Kubernetes API
+# fault proxy (kubernetes.fault_proxy) works by pointing $KUBECONFIG at its own generated kubeconfig.
+toolsets = ["core", "config"]

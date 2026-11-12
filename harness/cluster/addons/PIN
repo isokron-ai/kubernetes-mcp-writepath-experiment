@@ -1,0 +1,51 @@
+# Pins for the cluster add-ons (scope decided 2026-11-11: core + config first, then KubeVirt CRDs only, Helm, Tekton).
+# Read by cluster/addons/install.sh; every download is checked against the sha256 here before anything is applied.
+# Looked up read-only on 2026-11-11 with `gh release view` / `gh api` (no account, no write).
+
+# --- KubeVirt: CRDs only (no operator, no VMs) ---
+# The target has NO KubeVirt Go module in go.mod at v0.1.2: pkg/kubevirt talks to the API through the dynamic client
+# with hard-coded GVRs (pkg/kubevirt/gvr.go: kubevirt.io/v1, clone.kubevirt.io/v1beta1, instancetype.kubevirt.io/v1beta1,
+# cdi.kubevirt.io/v1beta1, ...). The version that "matches the target" is therefore the one the target's own dev
+# tooling installs: build/kubevirt.mk at the pin sets KUBEVIRT_VERSION ?= v1.9.0. v1.9.0 serves every GVR above
+# (checked in the v1.9.0 crds.go). Newer at lookup time: v1.9.1 (latest patch), v1.10.0-rc.0 (pre-release); not used.
+KUBEVIRT_TAG=v1.9.0
+KUBEVIRT_COMMIT=79d34c1762169e5b0370ec491cef5ca12e6b504c
+# Release asset (gh release v1.9.0 -R kubevirt/kubevirt; digest as listed by GitHub and checked locally):
+KUBEVIRT_OPERATOR_YAML_URL=https://github.com/kubevirt/kubevirt/releases/download/v1.9.0/kubevirt-operator.yaml
+KUBEVIRT_OPERATOR_YAML_SHA256=f11307caafc3c23ffedf9887d8beb5a4419e2694da242fa68f63d1ec820de2e0
+# Source files at the tag (raw.githubusercontent.com/kubevirt/kubevirt/v1.9.0/<path>):
+KUBEVIRT_VALIDATIONS_URL=https://raw.githubusercontent.com/kubevirt/kubevirt/v1.9.0/pkg/virt-operator/resource/generate/components/validations_generated.go
+KUBEVIRT_VALIDATIONS_SHA256=6663d916b1cde2bff317b9c97da4a7ff68340e539837a79a81add75be556dafc
+KUBEVIRT_CRDS_GO_URL=https://raw.githubusercontent.com/kubevirt/kubevirt/v1.9.0/pkg/virt-operator/resource/generate/components/crds.go
+KUBEVIRT_CRDS_GO_SHA256=7de0330eb50e51398349513f78623a46ce52986a00d86882f062ab3d0a278ba3
+# Output of cluster/addons/gen-kubevirt-crds.py on the two files above (deterministic; 9 CRDs, 1,016,217 bytes):
+KUBEVIRT_CRDS_GENERATED_SHA256=e12e8db1842a18e646586e510f4cff6e5beeabeb6a0afc8783822ade62335ad5
+# Not installed: CDI (cdi.kubevirt.io DataSource/DataVolume; a separate project, v1.66.0 in the target's kubevirt.mk),
+# template.kubevirt.io, hco.kubevirt.io, networkaddonsoperator. vm_create's DataSource lookups will see "no such kind".
+
+# --- Tekton Pipelines ---
+# The target's go.mod at v0.1.2: github.com/tektoncd/pipeline v1.16.0 (the client). Tekton Pipelines v1.16.0
+# ("Manx WALL-E", 2026-08-31) is that exact version; its controllers require Kubernetes >= v1.28.0
+# (KUBERNETES_MIN_VERSION in release.yaml), so 1.37 qualifies. (The target's build/tekton.mk installs v1.10.0 for its
+# own dev loop; the client version was preferred, as the brief asks.) Newer at lookup time: v1.17.1, v1.18.0 (LTS).
+TEKTON_TAG=v1.16.0
+TEKTON_RELEASE_URL=https://github.com/tektoncd/pipeline/releases/download/v1.16.0/release.yaml
+TEKTON_RELEASE_SHA256=bf27918ef22c71a58c786a1cb0d6505991d0d745d5f86dfa3e14f26dfc73a39f
+# Images named in release.yaml (all by digest; arm64 pulled by the kind node). Recorded again from the node after
+# the pull (crictl) in cluster/ADDONS.md.
+#   ghcr.io/tektoncd/pipeline/controller-10a3e32792f33651396d02b6855a6e36:v1.16.0@sha256:27458f2073bb6f826cbe7a97324ca5553d8d97e60f91f2b8dd37fea72c43fdf2
+#   ghcr.io/tektoncd/pipeline/webhook-d4749e605405422fd87700164e31b2d1:v1.16.0@sha256:cc0f3620092c91d8a2eb18a155fd0504dae7043a1fae9851dc7b5b9ed1ea3626
+#   ghcr.io/tektoncd/pipeline/events-a9042f7efb0cbade2a868a1ee5ddd52c:v1.16.0@sha256:3b4777e52b0fcf98c3a24d1227eedf2984a222c1af18ea0d5f56da0f4832b6d1
+#   ghcr.io/tektoncd/pipeline/resolvers-ff86b24f130c42b88983d3c13993056d:v1.16.0@sha256:318c3caf89aec173b4c4bb69da60d09e1a1f8d8ffb4b9255982832d9c63b70c5
+#   ghcr.io/tektoncd/pipeline/entrypoint-bff0a22da108bc2f16c818c97641a296:v1.16.0@sha256:d1f53cfb9005ebf271487777caa9836efa0ce6498438eecc62ad6de4e5884818  (injected into TaskRun pods)
+#   ghcr.io/tektoncd/pipeline/nop-8eac7c133edad5df719dc37b36b62482:v1.16.0@sha256:5746b90085fcfa4c3e2d8de29a63443637e2b5d58d3f8f76745948c8a4907f2b         (injected)
+#   ghcr.io/tektoncd/pipeline/sidecarlogresults-7501c6a20d741631510a448b48ab098f:v1.16.0@sha256:6d6bb29f673534afbca03784c31c26c8a7f7aaf3f8cd382b37fe1c8f500928be (injected when used)
+#   ghcr.io/tektoncd/pipeline/workingdirinit-0c558922ec6a1b739e550e349f2d5fc1:v1.16.0@sha256:ca55898b6bfbf62c1494b1cc9b292b1296837f40ff8c0830d723046ab8604c4d (injected when used)
+
+# --- Workload images used by fixtures, charts and usability jobs (index digests, docker buildx imagetools inspect) ---
+IMAGE_NGINX=docker.io/library/nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de
+IMAGE_BUSYBOX=docker.io/library/busybox:1.37.0@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
+
+# --- Helm ---
+# No chart repository and no remote chart: local chart directories in charts/ (ux-web, ux-never-ready). The CLI on
+# this Mac is Helm 4.3.1 (Homebrew; used only for `helm lint` and controls); the target embeds helm.sh/helm/v3 v3.22.1.

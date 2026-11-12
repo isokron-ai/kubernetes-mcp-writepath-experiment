@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ux-web
+description: Audit fixture. A ConfigMap and an nginx Deployment (image pinned by digest). Becomes ready within seconds.
+type: application
+version: 0.1.0
+appVersion: "1.29-alpine"

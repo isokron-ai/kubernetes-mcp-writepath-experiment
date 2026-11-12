@@ -1,0 +1,5 @@
+# Image pinned by index digest (cluster/addons/PIN). Override only for the failure fixture.
+image: docker.io/library/nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de
+replicaCount: 1
+greeting: hello
+logLevel: info

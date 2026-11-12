@@ -1,0 +1,138 @@
+# API server audit policy for the kubernetes-mcp-server audit. A harness file: frozen (sha256) with every series.
+#
+# Purpose: an INDEPENDENT record of every mutating request, made by the API server itself, that the probe
+# adapter matches against the wire-proxy capture (mcp-audit packages/probe, adapters/kube-audit.ts). The MCP
+# server is a Go binary talking to the API server directly, so this log is our only view of what it sent.
+#
+# What "every mutating request" means here, precisely: every create/update/patch/delete/deletecollection by
+# ANY identity is logged, except three heartbeat streams written by Kubernetes' own system identities
+# (groups 2-4 below; reads by system components, group 5, are not mutations). Nothing written by the MCP server's ServiceAccount (system:serviceaccount:mcp-audit-system:kms)
+# or by the control identity (the kind admin, through lib/kc.sh) is ever dropped: the None rules name only
+# system users and groups.
+#
+# Probe scope: Kubernetes audit rules match namespaces by exact name (no wildcards), and the probe adapter names
+# a fresh namespace per run (mcp-probe-<nonce12>). So the policy lists the NON-probe namespaces explicitly and
+# treats every other namespace as probe scope. The cluster is dedicated to the audit, so "every other namespace"
+# is the probe namespaces plus `default`; `default` is protected, and any write there is itself an integrity
+# problem whose body we want.
+#
+# Rules are evaluated in order; the first match decides the level. Within one rule, `users` and `userGroups`
+# must BOTH match when both are given (k8s.io/apiserver audit/policy/checker.go ruleMatches, v1.37.0), so each
+# exclusion below is written twice: once for system user names, once for system groups. The numbers in the
+# comments name groups of rules (1-11), not single list entries.
+apiVersion: audit.k8s.io/v1
+kind: Policy
+# One event per request at its final stage (plus ResponseStarted for watches). RequestReceived would double every
+# line and carries nothing the final stage lacks; the matcher counts ResponseComplete only.
+omitStages: [RequestReceived]
+# Keep managedFields in request/response bodies: Server-Side Apply field ownership is evidence for the
+# forced-apply and stale re-apply probes (which field manager took which field).
+omitManagedFields: false
+rules:
+  # 1. Health probes by the kubelet (unauthenticated /livez, /readyz, /healthz every few seconds). They change
+  #    nothing. Scoped to anonymous and node identities so a health call by the MCP server is still logged.
+  - level: None
+    users: ["system:anonymous"]
+    nonResourceURLs: ["/healthz*", "/livez*", "/readyz*"]
+  - level: None
+    userGroups: ["system:nodes"]
+    nonResourceURLs: ["/healthz*", "/livez*", "/readyz*"]
+
+  # 2. Lease renewals: kubelet node heartbeats (kube-node-lease) and leader election (kube-system), each about
+  #    every 10 s. Pure heartbeat; scoped to those two namespaces and to system identities, so a Lease written
+  #    by the MCP server or in a probe namespace is still logged.
+  - level: None
+    users: ["system:kube-controller-manager", "system:kube-scheduler", "system:apiserver"]
+    namespaces: [kube-node-lease, kube-system]
+    resources:
+      - group: coordination.k8s.io
+        resources: [leases]
+  - level: None
+    userGroups: ["system:nodes", "system:serviceaccounts:kube-system"]
+    namespaces: [kube-node-lease, kube-system]
+    resources:
+      - group: coordination.k8s.io
+        resources: [leases]
+
+  # 3. Events written by controllers, the scheduler and the kubelet ("Scheduled", "Pulled", "ScalingReplicaSet").
+  #    High volume, describe rather than change state, and would appear as unexplained writes in probe
+  #    namespaces. Events written by the MCP server or the control identity are NOT matched here.
+#    (Controllers run as kube-system ServiceAccounts: kubeadm sets use-service-account-credentials.)
+  - level: None
+    users: ["system:kube-controller-manager", "system:kube-scheduler", "system:apiserver"]
+    resources:
+      - group: ""
+        resources: [events]
+      - group: events.k8s.io
+        resources: [events]
+  - level: None
+    userGroups: ["system:nodes", "system:serviceaccounts:kube-system"]
+    resources:
+      - group: ""
+        resources: [events]
+      - group: events.k8s.io
+        resources: [events]
+
+  # 4. Node status heartbeats by the kubelet (nodes/status every ~10 s). Cluster-scoped, never a probe object.
+  - level: None
+    userGroups: ["system:nodes"]
+    verbs: [update, patch]
+    resources:
+      - group: ""
+        resources: [nodes, nodes/status]
+
+  # 5. Reads by Kubernetes' own components (informer list/watch, kubelet reads of ConfigMaps and Secrets for
+  #    pods, controller resyncs). A read changes nothing; reads by the MCP server and the control identity fall
+  #    through to rule 11 and are kept (they are the server's outbound-call trace, SOP Phase 3 step 3).
+  #    kind's storage provisioner (group system:serviceaccounts:local-path-storage) watches cluster-wide too.
+  - level: None
+    users: ["system:kube-controller-manager", "system:kube-scheduler", "system:apiserver", "system:kube-proxy"]
+    verbs: [get, list, watch]
+  - level: None
+    userGroups: ["system:nodes", "system:serviceaccounts:kube-system", "system:serviceaccounts:local-path-storage"]
+    verbs: [get, list, watch]
+
+  # 6. Credentials. Secret bodies, TokenRequest responses (kubectl create token for the kms ServiceAccount),
+  #    TokenReview requests and CSRs carry secrets or keys. At Metadata the log still records who did what to
+  #    which object and the status, which is all the matcher needs, and the log stays publishable in an
+  #    Evidence Pack (kronicle-lite's secret scan refuses blobs that look like credentials).
+  - level: Metadata
+    resources:
+      - group: ""
+        resources: [secrets, serviceaccounts/token]
+      - group: authentication.k8s.io
+        resources: [tokenreviews]
+      - group: certificates.k8s.io
+        resources: [certificatesigningrequests]
+
+  # 7. Namespace objects themselves: the adapter creates and deletes one probe namespace per run (labelled with
+  #    the run nonce), and the matcher treats a namespace write as in scope. Full bodies, so labels are visible.
+  #    (POST /api/v1/namespaces is cluster-scoped; GET/DELETE /api/v1/namespaces/<n> carry the name as the
+  #    namespace. This rule covers both before rules 8 and 9 can.)
+  - level: RequestResponse
+    verbs: [create, update, patch, delete, deletecollection]
+    resources:
+      - group: ""
+        resources: [namespaces]
+
+  # 8. Everything in the non-probe namespaces: Kubernetes' own (kube-system, kube-public, kube-node-lease),
+  #    kind's storage provisioner (local-path-storage) and the server identity's home (mcp-audit-system).
+  #    Not probe scope: who/what/when is kept for the protected-state check, without bodies.
+  - level: Metadata
+    namespaces: [kube-system, kube-public, kube-node-lease, local-path-storage, mcp-audit-system]
+
+  # 9. Other cluster-scoped objects (RBAC, CRDs, nodes, PersistentVolumes): Metadata. No probe targets them as
+  #    planned; if one does (for example a helm chart that installs CRDs), switch this rule to RequestResponse
+  #    for mutating verbs in a new cluster: the policy is frozen per series and only read at API server start.
+  - level: Metadata
+    namespaces: [""]
+
+  # 10. Probe scope: every mutating request in any remaining namespace (the probe namespaces and `default`)
+  #     at RequestResponse, the full request and response bodies.
+  - level: RequestResponse
+    verbs: [create, update, patch, delete, deletecollection]
+
+  # 11. Everything else (reads in probe scope and reads by the MCP server and control identity anywhere):
+  #     Metadata. Response bodies of list calls would dwarf the log; the wire-proxy capture already holds what
+  #     the server returned to the agent.
+  - level: Metadata

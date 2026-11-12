@@ -1,0 +1,26 @@
+# Cluster pins for the kubernetes-mcp-server audit. Looked up read-only on 2026-11-10; nothing installed or pulled.
+
+KIND_VERSION=v0.33.0
+# kind v0.33.0, released 2026-08-26, the latest kind release on 2026-11-10:
+#   https://github.com/kubernetes-sigs/kind/releases/tag/v0.33.0 (read with `gh release view v0.33.0 -R kubernetes-sigs/kind`)
+
+KIND_NODE_IMAGE=kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+# Source 1: the kind v0.33.0 release notes, "Images pre-built for this release" (also the release's default node image).
+#   The notes say the @sha256 digest must be used to get an image built for this release.
+# Source 2: Docker Hub, https://hub.docker.com/v2/repositories/kindest/node/tags/v1.37.0 (read 2026-11-10):
+#   index digest sha256:a1ed56cf...580ae5 (same), pushed 2026-08-26T21:11:14Z;
+#   per-platform: linux/arm64 sha256:6a3345f517a7df05185c648f83d18d464f2a94ea4a69eaee39b7e1de02611e59 (this Mac is arm64),
+#                 linux/amd64 sha256:1aac8018c42eb5d48fae5be507caaee789fc6d9b9b3f560359dd4157ac00d4f6.
+# Why 1.37: the target's go.mod at v0.1.2 uses k8s.io/client-go v0.37.1, i.e. the Kubernetes 1.37 client.
+#   Kubernetes 1.37 is the newest minor (latest patch v1.37.2, 2026-10-28); 1.35-1.37 are in support.
+# Known gap: kind v0.33.0 ships a 1.37.0 node image, two patch releases behind 1.37.2. No newer kindest/node tag
+#   exists on Docker Hub (most recent pushes are the v0.33.0 set). Building our own 1.37.2 node image
+#   (`kind build node-image`) is possible but makes outside reproduction harder; owner decision (PLAN.md).
+# Other images in the same release: v1.36.4 sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed,
+#   v1.35.8 sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0,
+#   v1.34.11 sha256:44e222ee2132dab25ff87301682f89eb82c7880ea3a1bf543bfe9708fd08d67d.
+# The target repository's own default (build/config.mk) is kindest/node:v1.31.0, unpinned; not used.
+
+KUBECTL_REQUIRED=1.36-1.38
+# kubectl supports one minor version of skew against the API server. Installed on 2026-11-10: kubectl v1.34.1
+#   (/usr/local/bin/kubectl), three minors behind 1.37: cluster/up.sh refuses it.

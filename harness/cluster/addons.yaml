@@ -1,0 +1,101 @@
+# RBAC for the cluster add-ons (KubeVirt CRDs, Tekton Pipelines, local Helm charts, the usability-pass test CRD).
+# Applied with the admin kubeconfig (lib/kc.sh) by cluster/addons/install.sh. Why each grant exists: cluster/ADDONS.md.
+#
+# cluster/server-rbac.yaml is NOT changed. The shape stays the same: cluster-wide READ of everyday kinds (kms-read),
+# WRITE only where a probe or job namespace binds a ClusterRole with a RoleBinding. These roles add:
+#
+#   kms-read-addons          cluster-wide read of the add-on kinds (Tekton, KubeVirt). Bound cluster-wide, like kms-read.
+#   kms-probe-write-addons   write on the add-on kinds, plus Roles/RoleBindings, plus the test CRD group. NOT bound
+#                            cluster-wide: each probe/job namespace binds it next to kms-probe-write.
+#   kms-helm-releases        Secrets, for Helm's default release storage (driver "secret"). NOT bound cluster-wide and
+#                            NOT part of kms-probe-write-addons: only a namespace where a Helm job runs binds it.
+#
+# Never granted: escalate, bind, impersonate, Secrets outside a Helm namespace, namespaces (create/delete), any
+# cluster-scoped write, CRD writes (the test CRD is installed by the control identity).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kms-read-addons
+  labels:
+    app.kubernetes.io/managed-by: kubernetes-audit-harness
+    audit.isokron.ai/addon: rbac
+rules:
+  - apiGroups: [tekton.dev]
+    resources: [pipelines, pipelineruns, tasks, taskruns, customruns, stepactions]
+    verbs: [get, list, watch]
+  - apiGroups: [kubevirt.io]
+    resources: [virtualmachines, virtualmachineinstances, virtualmachineinstancemigrations, kubevirts]
+    verbs: [get, list, watch]
+  - apiGroups: [clone.kubevirt.io]
+    resources: [virtualmachineclones]
+    verbs: [get, list, watch]
+  - apiGroups: [instancetype.kubevirt.io]
+    resources: [virtualmachineinstancetypes, virtualmachineclusterinstancetypes, virtualmachinepreferences,
+                virtualmachineclusterpreferences]
+    verbs: [get, list, watch]
+  - apiGroups: [ux.audit.isokron.test]
+    resources: ["*"]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kms-read-addons
+  labels:
+    app.kubernetes.io/managed-by: kubernetes-audit-harness
+    audit.isokron.ai/addon: rbac
+subjects:
+  - kind: ServiceAccount
+    name: kms
+    namespace: mcp-audit-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kms-read-addons
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kms-probe-write-addons
+  labels:
+    app.kubernetes.io/managed-by: kubernetes-audit-harness
+    audit.isokron.ai/addon: rbac
+rules:
+  # Tekton: start (create PipelineRun/TaskRun), cancel (patch), restart (get + create), clean-up (delete).
+  - apiGroups: [tekton.dev]
+    resources: [pipelines, pipelineruns, tasks, taskruns]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # KubeVirt objects (no operator runs, so these are inert API objects): vm_create (apply), vm_clone (create),
+  # vm_lifecycle (get + update), clean-up (delete).
+  - apiGroups: [kubevirt.io]
+    resources: [virtualmachines]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [clone.kubevirt.io]
+    resources: [virtualmachineclones]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [instancetype.kubevirt.io]
+    resources: [virtualmachineinstancetypes, virtualmachinepreferences]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # Namespaced RBAC objects (usability job 9: ServiceAccount + Role + RoleBinding). Without `escalate`/`bind` the
+  # API only lets kms create a Role whose rules kms itself already holds, and bind only such Roles.
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, rolebindings]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # The usability pass's own test CRD (job 12), group ux.audit.isokron.test, installed by the control identity.
+  - apiGroups: [ux.audit.isokron.test]
+    resources: ["*"]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kms-helm-releases
+  labels:
+    app.kubernetes.io/managed-by: kubernetes-audit-harness
+    audit.isokron.ai/addon: rbac
+rules:
+  # Helm's default storage driver keeps each release revision in a Secret (type helm.sh/release.v1) in the release
+  # namespace. helm_install / helm_list / helm_uninstall need these verbs on Secrets there.
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, watch, create, update, patch, delete]

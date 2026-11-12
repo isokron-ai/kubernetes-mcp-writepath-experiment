@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+  labels:
+    app.kubernetes.io/name: ux-web
+    app.kubernetes.io/instance: {{ .Release.Name }}
+data:
+  greeting: {{ .Values.greeting | quote }}
+  logLevel: {{ .Values.logLevel | quote }}
