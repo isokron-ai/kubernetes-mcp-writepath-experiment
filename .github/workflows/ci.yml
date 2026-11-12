@@ -1,0 +1,79 @@
+name: CI
+
+# Checks the experiment without a cluster, keys or models: both patch series apply with git am onto the upstream tag
+# and reproduce the build tags, every patch is listed in its SERIES, and the three builds reproduce the linux/amd64
+# hashes published in EXPERIMENT.md. Nothing is published and no secret is used.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  patch-series:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out code with tags
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Apply both series with git am onto the upstream tag
+        run: |
+          set -euo pipefail
+          series() { sed 's/#.*//; s/[[:space:]]//g' "$1/SERIES" | grep -v '^$'; }
+          for d in experiment-patches/bugfix experiment-patches/usability experiment-patches/main-13bfb96f/bugfix experiment-patches/main-13bfb96f/usability; do
+            for f in "$d"/*.patch; do
+              series "$d" | grep -qxF "$(basename "$f")" || { echo "$f is not in its SERIES" >&2; exit 1; }
+            done
+          done
+          test "$(git rev-parse 'upstream-v0.1.2^{tree}')" = d65794e676f0d74b42649d34d2dc9db48a94600f
+          git worktree add --detach ../applied upstream-v0.1.2
+          for s in bugfix usability; do
+            for p in $(series "experiment-patches/$s"); do
+              git -C ../applied -c user.name=ci -c user.email=ci@ci.invalid am --quiet "$PWD/experiment-patches/$s/$p" < /dev/null
+              echo "applied $s/$p"
+            done
+            tag=fixed-v0.1.2; [ "$s" = usability ] && tag=research-v0.1.2
+            got="$(git -C ../applied rev-parse 'HEAD^{tree}')"; want="$(git rev-parse "$tag^{tree}")"
+            echo "after $s: tree $got, tag $tag tree $want"
+            [ "$got" = "$want" ]
+          done
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out code with tags
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Go (the measured toolchain)
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.11'
+          cache: false
+
+      - name: Build baseline, fixed and research and compare with EXPERIMENT.md
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          set -euo pipefail
+          for b in baseline fixed research; do harness/build/build.sh "$b"; done
+          for b in baseline fixed research; do
+            h="$(sha256sum "harness/build/out/$b/kubernetes-mcp-server" | cut -d' ' -f1)"
+            grep -q "$h" EXPERIMENT.md && echo "$b $h: as published" || { echo "$b $h: not the published linux/amd64 hash" >&2; exit 1; }
+          done
