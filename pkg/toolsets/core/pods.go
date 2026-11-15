@@ -638,7 +638,7 @@ func podsRun(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 		return api.NewToolCallResult("", fmt.Errorf("failed to run pod: port must be between 1 and 65535, got %d", portValue)), nil
 	}
 	port := int32(portValue)
-	full, err := wantFullOutput(p)
+	mode, err := outputMode(p)
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to run pod: %w", err)), nil
 	}
@@ -664,17 +664,14 @@ func podsRun(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 	default:
 		return api.NewToolCallResult("", fmt.Errorf("failed to run pod: restartPolicy must be Always, OnFailure or Never, got %q", opts.RestartPolicy)), nil
 	}
-	resources, err := kubernetes.NewCore(params).PodsRunWithOptions(params, ns, name, image, port, opts)
+	records, err := kubernetes.NewCore(params).PodsRunRecorded(params, ns, name, image, port, opts)
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to run pod %s in namespace %s: %w", name, ns, err)), nil
 	}
-	marshalledYaml, err := writeResultYaml(resources, full)
+	marshalledYaml, err := writeResultYaml(records, mode)
 	if err != nil {
 		err = fmt.Errorf("failed to run pod: %w", err)
 	}
-	note := receiptNote
-	if full {
-		note = ""
-	}
+	note := receiptNote(mode)
 	return api.NewToolCallResult("# The following resources (YAML) have been created or updated successfully\n"+note+marshalledYaml, err), nil
 }

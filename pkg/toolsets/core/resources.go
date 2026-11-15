@@ -657,7 +657,7 @@ func resourcesCreateOrUpdate(params api.ToolHandlerParams) (*api.ToolCallResult,
 		return api.NewToolCallResult("", fmt.Errorf("resource is not a string")), nil
 	}
 
-	full, err := wantFullOutput(api.WrapParams(params))
+	mode, err := outputMode(api.WrapParams(params))
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to create or update resources: %w", err)), nil
 	}
@@ -687,23 +687,24 @@ func resourcesCreateOrUpdate(params api.ToolHandlerParams) (*api.ToolCallResult,
 		return api.NewToolCallResult("", fmt.Errorf("failed to create or update resources: %w", err)), nil
 	}
 
-	resources, err := kubernetes.NewCore(params).ResourcesApply(params, r, opts)
+	opts.RecordChanges = mode == outputReceipt && !opts.DryRun
+	records, err := kubernetes.NewCore(params).ResourcesApplyRecorded(params, r, opts)
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to create or update resources: %w", err)), nil
 	}
-	marshalledYaml, err := writeResultYaml(resources, full)
+	if opts.DryRun && mode == outputReceipt {
+		mode = outputCompact
+	}
+	marshalledYaml, err := writeResultYaml(records, mode)
 	if err != nil {
 		err = fmt.Errorf("failed to create or update resources: %w", err)
 	}
-	note := receiptNote
-	if full {
-		note = ""
-	}
+	note := receiptNote(mode)
 	if opts.DryRun {
 		return api.NewToolCallResult("# Dry run (server-side, dryRun=All): every document was accepted; nothing was written\n"+note+marshalledYaml, err), nil
 	}
 	if wait > 0 {
-		note += waitForObjects(params, resources, wait)
+		note += waitForObjects(params, kubernetes.Results(records), wait)
 	}
 	return api.NewToolCallResult("# The following resources (YAML) have been created or updated successfully\n"+note+marshalledYaml, err), nil
 }
@@ -719,18 +720,18 @@ func resourcesPatch(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 	patchType := p.RequiredString("patchType")
 	patch := p.RequiredString("patch")
 	resourceVersion := p.OptionalString("resourceVersion", "")
-	full, outputErr := wantFullOutput(p)
+	mode, outputErr := outputMode(p)
 	if err := errors.Join(p.Err(), outputErr); err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to patch resource: %w", err)), nil
 	}
-	patched, err := kubernetes.NewCore(params).ResourcesPatch(params, gvk, ns, name, patchType, patch, resourceVersion)
+	record, err := kubernetes.NewCore(params).ResourcesPatchRecorded(params, gvk, ns, name, patchType, patch, resourceVersion, mode == outputReceipt)
 	if err != nil {
 		if resourceVersion != "" && apierrors.IsConflict(err) {
 			err = fmt.Errorf("%w (the object changed after resourceVersion %s was read: read it again and rebuild the patch)", err, resourceVersion)
 		}
 		return api.NewToolCallResult("", fmt.Errorf("failed to patch resource: %w", err)), nil
 	}
-	text, err := writeResultYaml([]*unstructured.Unstructured{patched}, full)
+	text, err := writeResultYaml([]kubernetes.WriteRecord{record}, mode)
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to patch resource: %w", err)), nil
 	}
@@ -893,10 +894,11 @@ func resourcesScale(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
 		}
 	}
 
-	full, err := wantFullOutput(api.WrapParams(params))
+	mode, err := outputMode(api.WrapParams(params))
 	if err != nil {
 		return api.NewToolCallResult("", fmt.Errorf("failed to get/update resource scale: %w", err)), nil
 	}
+	full := mode == outputFull
 
 	scale, err := kubernetes.NewCore(params).ResourcesScale(params.Context, gvk, ns, n, desiredScale, shouldScale)
 	if err != nil {

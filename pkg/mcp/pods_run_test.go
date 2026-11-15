@@ -196,6 +196,22 @@ func (s *PodsRunSuite) TestPodsRunReturnsReceiptByDefault() {
 		s.NotContains(text, "spec:")
 		s.NotContains(text, "status:")
 	})
+	s.Run("lists the fields it set on the created Pod", func() {
+		s.Equal(true, decoded[0].Object["created"])
+		changed, ok := decoded[0].Object["changed"].(map[string]interface{})
+		s.Require().Truef(ok, "changed: %v", decoded[0].Object["changed"])
+		s.Equal("nginx", changed["spec.containers[0].image"])
+	})
+}
+
+func (s *PodsRunSuite) TestPodsRunCompactReceipt() {
+	s.InitMcpClient()
+	toolResult, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "name": "compact-pod", "output": "compact"})
+	s.Require().NoError(err)
+	s.Require().Falsef(toolResult.IsError, "call tool failed: %v", toolResult.Content)
+	text := toolResult.Content[0].(*mcp.TextContent).Text
+	s.NotContains(text, "changed")
+	s.NotContains(text, "image")
 }
 
 func (s *PodsRunSuite) TestPodsRunDenied() {

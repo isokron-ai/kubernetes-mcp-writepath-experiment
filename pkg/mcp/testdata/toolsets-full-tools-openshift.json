@@ -962,9 +962,10 @@
           "type": "string"
         },
         "output": {
-          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
+          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation, and under 'changed' each field this call changed with its new value (null: removed); 'compact' gives the identity and version only; 'full' gives the whole object as stored, as earlier versions did.",
           "enum": [
             "receipt",
+            "compact",
             "full"
           ],
           "type": "string"
@@ -1165,9 +1166,10 @@
           "type": "string"
         },
         "output": {
-          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
+          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation, and under 'changed' each field this call changed with its new value (null: removed); 'compact' gives the identity and version only; 'full' gives the whole object as stored, as earlier versions did.",
           "enum": [
             "receipt",
+            "compact",
             "full"
           ],
           "type": "string"
@@ -1621,9 +1623,10 @@
           "type": "string"
         },
         "output": {
-          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
+          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation, and under 'changed' each field this call changed with its new value (null: removed); 'compact' gives the identity and version only; 'full' gives the whole object as stored, as earlier versions did.",
           "enum": [
             "receipt",
+            "compact",
             "full"
           ],
           "type": "string"
@@ -1833,9 +1836,10 @@
           "type": "string"
         },
         "output": {
-          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
+          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation, and under 'changed' each field this call changed with its new value (null: removed); 'compact' gives the identity and version only; 'full' gives the whole object as stored, as earlier versions did.",
           "enum": [
             "receipt",
+            "compact",
             "full"
           ],
           "type": "string"

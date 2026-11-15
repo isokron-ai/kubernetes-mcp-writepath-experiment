@@ -96,15 +96,51 @@ type ApplyOptions struct {
 	// It is a compensating action, not a transaction: objects that existed before and were
 	// changed are not restored, and a delete can itself fail. Both are reported.
 	RollbackOnFailure bool
+	// RecordChanges reads each object just before it is written and keeps a copy of what
+	// was sent, so that the caller can report which fields the write changed (see
+	// WriteRecord). A read that fails only leaves the earlier state unknown; it never
+	// fails the write.
+	RecordChanges bool
+}
+
+// WriteRecord is one written object, with what the call knew of it before the write.
+type WriteRecord struct {
+	// Result is the object as the API returned it after the write.
+	Result *unstructured.Unstructured
+	// Sent is the object as the call sent it (nil when not recorded, or for a patch).
+	Sent *unstructured.Unstructured
+	// Previous is the object as read just before the write: nil if it did not exist.
+	Previous *unstructured.Unstructured
+	// PreviousKnown says whether that read was made and answered (found or not found).
+	PreviousKnown bool
+}
+
+// Results returns the written objects of records, in order.
+func Results(records []WriteRecord) []*unstructured.Unstructured {
+	objs := make([]*unstructured.Unstructured, len(records))
+	for i, r := range records {
+		objs[i] = r.Result
+	}
+	return objs
 }
 
 // ResourcesApply parses a YAML or JSON manifest stream and writes every document.
 func (c *Core) ResourcesApply(ctx context.Context, resource string, opts ApplyOptions) ([]*unstructured.Unstructured, error) {
+	records, err := c.ResourcesApplyRecorded(ctx, resource, opts)
+	if err != nil {
+		return nil, err
+	}
+	return Results(records), nil
+}
+
+// ResourcesApplyRecorded is ResourcesApply with a WriteRecord for every document. With
+// opts.RecordChanges each record also holds the object as it was before the write.
+func (c *Core) ResourcesApplyRecorded(ctx context.Context, resource string, opts ApplyOptions) ([]WriteRecord, error) {
 	parsedResources, err := ParseManifests(resource)
 	if err != nil {
 		return nil, err
 	}
-	return c.resourcesApply(ctx, parsedResources, opts)
+	return c.resourcesApplyRecords(ctx, parsedResources, opts)
 }
 
 // ResourcesApplyObject server-side applies one object that the caller built as
@@ -414,6 +450,14 @@ func (c *Core) resourcesCreateOrUpdate(ctx context.Context, resources []*unstruc
 }
 
 func (c *Core) resourcesApply(ctx context.Context, resources []*unstructured.Unstructured, opts ApplyOptions) ([]*unstructured.Unstructured, error) {
+	records, err := c.resourcesApplyRecords(ctx, resources, opts)
+	if err != nil {
+		return nil, err
+	}
+	return Results(records), nil
+}
+
+func (c *Core) resourcesApplyRecords(ctx context.Context, resources []*unstructured.Unstructured, opts ApplyOptions) ([]WriteRecord, error) {
 	// Resolve every document's resource and namespace before the first write, so an
 	// unknown kind or apiVersion fails the call with nothing applied. A kind defined by a
 	// CustomResourceDefinition earlier in the same input cannot resolve yet; it is
@@ -457,13 +501,18 @@ func (c *Core) resourcesApply(ctx context.Context, resources []*unstructured.Uns
 			return nil, err
 		}
 		if opts.DryRun {
-			return dryRun, nil
+			records := make([]WriteRecord, len(dryRun))
+			for i, obj := range dryRun {
+				records[i] = WriteRecord{Result: obj}
+			}
+			return records, nil
 		}
 	}
 
 	// existed[i] is known only when a rollback may be needed: it decides which objects
 	// this call created (and may delete again) and which it changed (and cannot restore).
 	existed := make([]bool, len(resources))
+	records := make([]WriteRecord, len(resources))
 	partial := func(i int, err error) error {
 		if len(resources) == 1 {
 			return err
@@ -510,24 +559,36 @@ func (c *Core) resourcesApply(ctx context.Context, resources []*unstructured.Uns
 		}
 		obj.SetNamespace(namespaces[i])
 		client := c.DynamicClient().Resource(*gvrs[i]).Namespace(namespaces[i])
-		if opts.RollbackOnFailure {
-			_, getErr := client.Get(ctx, obj.GetName(), metav1.GetOptions{})
-			if getErr != nil && !apierrors.IsNotFound(getErr) {
+		if opts.RecordChanges {
+			records[i].Sent = obj.DeepCopy()
+		}
+		if opts.RollbackOnFailure || opts.RecordChanges {
+			current, getErr := client.Get(ctx, obj.GetName(), metav1.GetOptions{})
+			switch {
+			case getErr == nil:
+				records[i].Previous, records[i].PreviousKnown = current, true
+			case apierrors.IsNotFound(getErr):
+				records[i].PreviousKnown = true
+			case opts.RollbackOnFailure:
 				return nil, partial(i, getErr)
 			}
 			existed[i] = getErr == nil
+		}
+		if !opts.RecordChanges {
+			records[i].Previous, records[i].PreviousKnown = nil, false
 		}
 		applied, err := c.writeDocument(ctx, client, obj, outcomes[i], opts, false)
 		if err != nil {
 			return nil, partial(i, err)
 		}
 		resources[i] = applied
+		records[i].Result = applied
 		// Clear the cache to ensure the next operation is performed on the latest exposed APIs (will change after the CRD creation)
 		if gvk.Kind == "CustomResourceDefinition" {
 			c.RESTMapper().Reset()
 		}
 	}
-	return resources, nil
+	return records, nil
 }
 
 // writeDocument creates or applies one object, as a server-side dry run if dryRun is set.
