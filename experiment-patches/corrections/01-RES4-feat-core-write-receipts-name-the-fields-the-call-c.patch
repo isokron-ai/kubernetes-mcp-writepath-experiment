@@ -324,7 +324,7 @@ index b1b6715..8cb23d1 100644
  	s.Run("an unknown patchType is refused", func() {
  		result, err := s.CallTool("resources_patch", map[string]interface{}{
 diff --git a/pkg/mcp/resources_test.go b/pkg/mcp/resources_test.go
-index 50d4e25..6b78360 100644
+index 50d4e25..549de67 100644
 --- a/pkg/mcp/resources_test.go
 +++ b/pkg/mcp/resources_test.go
 @@ -1420,7 +1420,36 @@ func (s *ResourcesSuite) TestResourcesWriteReceipts() {
@@ -349,7 +349,7 @@ index 50d4e25..6b78360 100644
 +		s.Equal(map[string]interface{}{"data.level": "debug"}, decoded[0].Object["changed"])
 +		s.NotContains(decoded[0].Object, "created")
 +		s.NotContains(text, "xxxx", "an unchanged field is not echoed")
-+		s.Contains(text, "# Receipt: identity and version of each object, and under changed each field this call changed")
++		s.Contains(text, "# Receipt: identity, version and changed fields (new values; null = removed)")
 +	})
 +	s.Run("resources_create_or_update with output: compact returns identity and version only", func() {
 +		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{"resource": cm, "output": "compact"})
@@ -608,7 +608,7 @@ index b9a23fc..87c88a2 100644
  	return api.NewToolCallResult("# The following resources (YAML) have been created or updated successfully\n"+note+marshalledYaml, err), nil
  }
 diff --git a/pkg/toolsets/core/receipt.go b/pkg/toolsets/core/receipt.go
-index 99c9a71..1926b6f 100644
+index 99c9a71..42e5437 100644
 --- a/pkg/toolsets/core/receipt.go
 +++ b/pkg/toolsets/core/receipt.go
 @@ -2,7 +2,10 @@ package core
@@ -857,7 +857,7 @@ index 99c9a71..1926b6f 100644
 +	case outputCompact:
 +		return "# Receipt: identity and version of each object; pass output: full for the whole objects\n"
 +	case outputReceipt:
-+		return "# Receipt: identity and version of each object, and under changed each field this call changed with its new value (null: removed); pass output: full for the whole objects\n"
++		return "# Receipt: identity, version and changed fields (new values; null = removed); output: full for whole objects\n"
 +	}
 +	return ""
 +}

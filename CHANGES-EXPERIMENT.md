@@ -358,7 +358,7 @@ than v0.1.2. The benchmark figures in [results/](results/) are for `research`, w
 
 ### corrections/01 (RES-4): feat(core): write receipts name the fields the call changed
 
-Commit `1aedbc5783`. Patch `experiment-patches/corrections/01-RES4-feat-core-write-receipts-name-the-fields-the-call-c.patch`. Upstream: not filed (research build).
+Commits `1aedbc5783` and `4b10d1b` (a shorter header line), one patch: `experiment-patches/corrections/01-RES4-feat-core-write-receipts-name-the-fields-the-call-c.patch`. Upstream: not filed (research build).
 
 - **Why:** The usability/01 receipt gave each written object's identity and version only. MWS-RES-4 (a SHOULD) asks
   that a write's answer carry what the call changed, by name or new value; v0.1.2 met it by echoing the whole object,
@@ -373,7 +373,7 @@ Commit `1aedbc5783`. Patch `experiment-patches/corrections/01-RES4-feat-core-wri
   `resources_patch` and `pods_run`; a dry run keeps the identity-only receipt.
 - **Trade-off kept:** usability/01 trimmed the results for token cost (6,233 tokens of echoes in the first native
   usability series). That receipt is still there as `output: compact`; `output: full` still returns whole objects.
-  The default answer stays a few lines for a one-field edit. Each recorded write makes one extra read (`get`) before
+  The default answer stays a few lines for a one-field edit: on a local kind cluster, updating one key of a two-key ConfigMap answered in 547 bytes on v0.1.2 (whole object), 329 on the research build and about 380 on `research-r2` (`data.b: "3"` under `changed`). Each recorded write makes one extra read (`get`) before
   it; if that read is refused, the write still goes ahead. The tool list grows by 124 cl100k tokens (the longer
   `output` description on 4 tools; core toolset snapshot, 10,261 → 10,385).
 - **Files:** `pkg/kubernetes/patch.go`, `pkg/kubernetes/pods.go`, `pkg/kubernetes/resources.go`, `pkg/toolsets/core/pods.go`, `pkg/toolsets/core/receipt.go`, `pkg/toolsets/core/resources.go`

@@ -40,7 +40,7 @@ reviews here; the server source on `main` is the research build's.
 | baseline | `upstream-v0.1.2` | upstream v0.1.2 (`66553fed`), unmodified | `d65794e676f0d74b42649d34d2dc9db48a94600f` |
 | fixed | `fixed-v0.1.2` | baseline plus the 16 bug-fix commits | `934f9e8f678ffcbc25aadcb2aeaf460115715a3d` |
 | research | `research-v0.1.2` | the fixed build plus the 19 usability commits | `766d2c64d818af9f6e022ff768be2f99658d1d15` |
-| research-r2 | (tree pinned in `harness/build/PIN`) | the research build plus the corrections made after the measurement ([CHANGES-EXPERIMENT.md](CHANGES-EXPERIMENT.md#corrections-after-the-measurement)); not measured by the benchmark | `338f812f1ed4994362d37d57d246a5ac95a55661` |
+| research-r2 | (tree pinned in `harness/build/PIN`) | the research build plus the corrections made after the measurement ([CHANGES-EXPERIMENT.md](CHANGES-EXPERIMENT.md#corrections-after-the-measurement)); not measured by the benchmark | `db20c4887808b495ebeb0e33a70fbeb3ae83720d` |
 
 Binary sha256 of the builds that were **measured** (darwin/arm64, go1.26.11), and of the same builds made from this
 repository with [`harness/build/build.sh`](harness/build/build.sh):
@@ -50,7 +50,7 @@ repository with [`harness/build/build.sh`](harness/build/build.sh):
 | baseline | `931b5f5a4a3947f9a4ab329e4731434dd8a9722aee681526f84fafb85130e889` | `3b563b61f1922f67b05af42170b7247704a404861f0762bddef5fd2c8a340601` | `a8b4267fabcb29b8c55011652cc7d38fe2155a899015c08ee0753ebd29859a28` |
 | fixed | `bac15e1475c911b2ef43b06292a7a89d850fe3316f5eca614a8c8034c88af574` | `e6d67ca341f3664439b182971dc5add80c081de9887492afeba38e671b355f2e` | `9b2be870f2ea19cf1855509f64a7257c739be67b87f67b3d8d2ce73292530c4c` |
 | research | `167a5a650592d314ffbb24ddbe3e2b81c45fb49c13062acd53c02052d58ddb82` | `c6a41bb1c3e16a7f1d31968a0844ee64a524e06cd37c512aed03a42f1eef7118` | `7db8367877cc410667fa685d0f5d6e7130aaa20537f9aef34dd01634bab019d6` |
-| research-r2 | not measured | `a9a686078f04308129406032dd39c3567101ed3ab7c17eaa6b5bbf26f2a61cd9` | `9809c6f1f5d3c13b1304fbd2da3beaef8e342c20b28ff7b1603c041b778af4de` |
+| research-r2 | not measured | `c70ddc1a987909f0e93c59604a93b5cf48a74757087165e2a4a9cad6f8623adf` | `197d8bb31fe3daa7128a31963db3794f385e1b0247338acb2e5318a9152a1782` |
 
 **Why the hashes differ (DRV-3).** `go build` embeds the version-control stamp of the git repository it runs in. The
 measured binaries were built inside IsoKron's internal harness repository, so each carries that repository's
