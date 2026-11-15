@@ -233,6 +233,16 @@ type PodsRunOptions struct {
 // PodsRunWithOptions runs a Pod (and, with a port, a Service and Route) with a command,
 // arguments and restart policy.
 func (c *Core) PodsRunWithOptions(ctx context.Context, namespace, name, image string, port int32, opts PodsRunOptions) ([]*unstructured.Unstructured, error) {
+	records, err := c.PodsRunRecorded(ctx, namespace, name, image, port, opts)
+	if err != nil {
+		return nil, err
+	}
+	return Results(records), nil
+}
+
+// PodsRunRecorded is PodsRunWithOptions with a WriteRecord for each object written,
+// holding the object as it was before the write (nil when pods_run created it).
+func (c *Core) PodsRunRecorded(ctx context.Context, namespace, name, image string, port int32, opts PodsRunOptions) ([]WriteRecord, error) {
 	if name == "" {
 		name = version.BinaryName + "-run-" + rand.String(5)
 	}
@@ -335,7 +345,7 @@ func (c *Core) PodsRunWithOptions(ctx context.Context, namespace, name, image st
 			return nil, fmt.Errorf("%s %s/%s already exists (created by an earlier pods_run); nothing was changed: choose another name, delete it first, or pass replace: true to re-apply over it (immutable Pod fields such as the command still need a delete)", gvk.Kind, u.GetNamespace(), u.GetName())
 		}
 	}
-	return c.resourcesCreateOrUpdate(ctx, toCreate)
+	return c.resourcesApplyRecords(ctx, toCreate, ApplyOptions{Force: true, RecordChanges: true})
 }
 
 func (c *Core) PodsTop(ctx context.Context, options api.PodsTopOptions) (*metrics.PodMetricsList, error) {

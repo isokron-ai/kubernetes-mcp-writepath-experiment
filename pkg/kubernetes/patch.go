@@ -25,23 +25,39 @@ var PatchTypes = map[string]types.PatchType{
 // patch carries it as a precondition: the API refuses the patch (409 Conflict) when the
 // object has changed since that version was read.
 func (c *Core) ResourcesPatch(ctx context.Context, gvk *schema.GroupVersionKind, namespace, name, patchType, patch, resourceVersion string) (*unstructured.Unstructured, error) {
+	record, err := c.ResourcesPatchRecorded(ctx, gvk, namespace, name, patchType, patch, resourceVersion, false)
+	return record.Result, err
+}
+
+// ResourcesPatchRecorded is ResourcesPatch with a WriteRecord. With recordChanges the
+// object is read just before the patch, so that the caller can report which fields the
+// patch changed; a read that fails only leaves the earlier state unknown.
+func (c *Core) ResourcesPatchRecorded(ctx context.Context, gvk *schema.GroupVersionKind, namespace, name, patchType, patch, resourceVersion string, recordChanges bool) (WriteRecord, error) {
+	var record WriteRecord
 	pt, ok := PatchTypes[patchType]
 	if !ok {
-		return nil, fmt.Errorf("patchType must be one of strategic, merge or json, got %q", patchType)
+		return record, fmt.Errorf("patchType must be one of strategic, merge or json, got %q", patchType)
 	}
 	body, err := patchBody(pt, patch, resourceVersion)
 	if err != nil {
-		return nil, err
+		return record, err
 	}
 	gvr, err := c.resourceFor(gvk)
 	if err != nil {
-		return nil, err
+		return record, err
 	}
 	namespace, err = c.effectiveNamespace(gvk, namespace)
 	if err != nil {
-		return nil, err
+		return record, err
 	}
-	return c.DynamicClient().Resource(*gvr).Namespace(namespace).Patch(ctx, name, pt, body, metav1.PatchOptions{FieldManager: version.BinaryName})
+	client := c.DynamicClient().Resource(*gvr).Namespace(namespace)
+	if recordChanges {
+		if current, getErr := client.Get(ctx, name, metav1.GetOptions{}); getErr == nil {
+			record.Previous, record.PreviousKnown = current, true
+		}
+	}
+	record.Result, err = client.Patch(ctx, name, pt, body, metav1.PatchOptions{FieldManager: version.BinaryName})
+	return record, err
 }
 
 // patchBody converts a YAML or JSON patch to JSON and adds the resourceVersion

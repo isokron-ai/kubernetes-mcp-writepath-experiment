@@ -1420,7 +1420,36 @@ func (s *ResourcesSuite) TestResourcesWriteReceipts() {
 		s.Require().Len(decoded, 1)
 		s.Equal("a-cm-receipt", decoded[0].GetName())
 		s.NotEmpty(decoded[0].GetResourceVersion())
-		s.NotContains(text, "xxxx", "a receipt carries no data")
+		s.Run("a created object lists the fields the call set", func() {
+			s.Equal(true, decoded[0].Object["created"])
+			s.Equal(map[string]interface{}{"data.big": strings.Repeat("x", 200)}, decoded[0].Object["changed"])
+		})
+	})
+	s.Run("an update's receipt lists only the fields it changed, with their new values", func() {
+		update := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: a-cm-receipt\n  namespace: default\ndata:\n  big: " + strings.Repeat("x", 200) + "\n  level: debug\n"
+		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{"resource": update})
+		s.Require().NoError(err)
+		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
+		text := result.Content[0].(*mcp.TextContent).Text
+		var decoded []unstructured.Unstructured
+		s.Require().NoError(yaml.Unmarshal([]byte(text), &decoded))
+		s.Require().Len(decoded, 1)
+		s.Equal(map[string]interface{}{"data.level": "debug"}, decoded[0].Object["changed"])
+		s.NotContains(decoded[0].Object, "created")
+		s.NotContains(text, "xxxx", "an unchanged field is not echoed")
+		s.Contains(text, "# Receipt: identity and version of each object, and under changed each field this call changed")
+	})
+	s.Run("resources_create_or_update with output: compact returns identity and version only", func() {
+		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{"resource": cm, "output": "compact"})
+		s.Require().NoError(err)
+		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
+		text := result.Content[0].(*mcp.TextContent).Text
+		var decoded []unstructured.Unstructured
+		s.Require().NoError(yaml.Unmarshal([]byte(text), &decoded))
+		s.Require().Len(decoded, 1)
+		s.NotEmpty(decoded[0].GetResourceVersion())
+		s.NotContains(text, "changed:")
+		s.NotContains(text, "xxxx", "a compact receipt carries no data")
 	})
 	s.Run("resources_create_or_update with output: full returns the object", func() {
 		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{"resource": cm, "output": "full"})

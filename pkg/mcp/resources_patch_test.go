@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -8,8 +9,10 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/yaml"
 
 	"github.com/containers/kubernetes-mcp-server/internal/test"
 )
@@ -80,6 +83,22 @@ func (s *ResourcesPatchSuite) TestResourcesPatch() {
 		s.Contains(text, "# ConfigMap cm-to-patch patched (merge patch)")
 		s.Contains(text, "resourceVersion:")
 		s.NotContains(text, "LOG_LEVEL")
+		s.Run("naming the field the patch changed and its new value", func() {
+			var decoded []unstructured.Unstructured
+			s.Require().NoError(yaml.Unmarshal([]byte(strings.SplitN(text, "\n", 2)[1]), &decoded))
+			s.Require().Len(decoded, 1)
+			s.Equal(map[string]interface{}{"data.A": "b"}, decoded[0].Object["changed"])
+		})
+	})
+	s.Run("returns a compact receipt with output: compact", func() {
+		result, err := s.CallTool("resources_patch", map[string]interface{}{
+			"apiVersion": "v1", "kind": "ConfigMap", "namespace": "default", "name": "cm-to-patch",
+			"patchType": "merge", "patch": `{"data":{"A":"c"}}`, "output": "compact",
+		})
+		s.Require().NoError(err)
+		text := result.Content[0].(*mcp.TextContent).Text
+		s.Contains(text, "resourceVersion:")
+		s.NotContains(text, "changed")
 	})
 	s.Run("an unknown patchType is refused", func() {
 		result, err := s.CallTool("resources_patch", map[string]interface{}{
