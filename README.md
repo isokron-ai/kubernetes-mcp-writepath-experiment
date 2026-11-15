@@ -3,7 +3,7 @@
 > patches for 17 bugs (reported upstream as #1658 to #1672 and a comment on #1584) and 19 usability changes. It is not affiliated with or
 > endorsed by the kubernetes-mcp-server maintainers or Red Hat and is not a supported distribution. On six pre-registered
 > tasks the research build completed 30 of 30 runs, as v0.1.2 did, at 37.0% lower expected cost per verified success and
-> with 59.2% fewer tool calls per run (Claude Opus 5.5, 5 runs per task and build); expected tokens were 3.3% lower.
+> with 59.2% fewer tool calls per run (5 runs per task and build); expected tokens were 3.3% lower.
 > Correction, 15 November 2026: the measured research build's write receipts did not name the fields a write changed;
 > build `research-r2` adds them by default (`output: compact` keeps the measured receipt). See CHANGES-EXPERIMENT.md.
 > Read [EXPERIMENT.md](EXPERIMENT.md) first; the findings are in [FINDINGS.md](FINDINGS.md); the upstream README follows
