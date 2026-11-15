@@ -4,6 +4,8 @@
 #   harness/build/build.sh baseline     the pinned upstream tree (tag upstream-v0.1.2), unmodified
 #   harness/build/build.sh fixed        baseline + experiment-patches/bugfix/ in its SERIES order (16 patches)
 #   harness/build/build.sh research     fixed + experiment-patches/usability/ in its SERIES order (19 patches)
+#   harness/build/build.sh research-r2  research + experiment-patches/corrections/ in its SERIES order: corrections
+#                                       made after the measurement (the research build as measured stays `research`)
 #
 # Output: harness/build/out/<name>/kubernetes-mcp-server and harness/build/out/<name>/BUILD.json (pin, every patch with
 # its sha256, Go version, target platform, flags, binary sha256). Work copies go to harness/build/work/<name>/.
@@ -34,7 +36,7 @@ refuse() { echo "REFUSED: $*" >&2; exit 2; }
 # shellcheck disable=SC1091
 . "$HB/PIN"
 name="${1:-}"
-case "$name" in baseline|fixed|research) ;; *) refuse "usage: harness/build/build.sh baseline|fixed|research" ;; esac
+case "$name" in baseline|fixed|research|research-r2) ;; *) refuse "usage: harness/build/build.sh baseline|fixed|research|research-r2" ;; esac
 command -v go >/dev/null || refuse "no go on PATH"
 command -v git >/dev/null || refuse "no git on PATH"
 
@@ -72,6 +74,7 @@ series=()
 case "$name" in
   fixed) series=(bugfix) ;;
   research) series=(bugfix usability) ;;
+  research-r2) series=(bugfix usability corrections) ;;
 esac
 applied_json="["; sep=""
 for s in ${series[@]+"${series[@]}"}; do
@@ -91,10 +94,15 @@ applied_json+="]"
 [ "$name" = baseline ] || [ "$applied_json" != "[]" ] || refuse "$name has no patches"
 patched_tree="$(git -C "$work" write-tree)"
 # The patched tree must equal the tree of this repository's tag for that build, when the tag is there.
-tag=""; case "$name" in baseline) tag=upstream-v0.1.2 ;; fixed) tag=fixed-v0.1.2 ;; research) tag=research-v0.1.2 ;; esac
+tag=""; case "$name" in baseline) tag=upstream-v0.1.2 ;; fixed) tag=fixed-v0.1.2 ;; research) tag=research-v0.1.2 ;; research-r2) tag=research-v0.1.2-r2 ;; esac
 if want="$(git -C "$ROOT" rev-parse "$tag^{tree}" 2>/dev/null)"; then
   [ "$patched_tree" = "$want" ] || refuse "patched tree $patched_tree differs from tag $tag ($want)"
   echo "tree $patched_tree = tag $tag"
+fi
+# research-r2 is also pinned by tree id in PIN, so the check holds before its tag exists.
+if [ "$name" = research-r2 ]; then
+  [ "$patched_tree" = "$RESEARCH_R2_TREE" ] || refuse "patched tree $patched_tree differs from RESEARCH_R2_TREE in PIN ($RESEARCH_R2_TREE)"
+  echo "tree $patched_tree = RESEARCH_R2_TREE"
 fi
 
 # 3. Build.

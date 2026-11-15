@@ -1,0 +1,1069 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joshua Bryan <45343084+rafe-walker@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 13:24:54 -0700
+Subject: [PATCH] feat(core): write receipts name the fields the call changed
+
+The research build's write receipts (usability/01) carried only each object's
+identity and version, so a caller could not see from the answer what the write
+changed. MWS-RES-4 asks for that, and the research build fell below it on
+resources_create_or_update (3 write paths).
+
+The default receipt now adds, under `changed`, each field the call changed with
+its new value (null for a removed field): for an existing object, the fields that
+differ between a read made just before the write and the API's answer; for a
+created object, the fields the call sent. If the earlier read fails, the fields the
+call sent are listed under `set` instead. Status and server-maintained metadata are
+left out, strings are cut at 256 characters and at most 50 fields are listed.
+
+`output: compact` keeps the identity-and-version receipt that the benchmark
+measured; `output: full` still returns the whole objects. Applies to
+resources_create_or_update, resources_patch and pods_run.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ pkg/kubernetes/patch.go                       |  26 ++-
+ pkg/kubernetes/pods.go                        |  12 +-
+ pkg/kubernetes/resources.go                   |  73 +++++-
+ pkg/mcp/pods_run_test.go                      |  16 ++
+ pkg/mcp/resources_patch_test.go               |  19 ++
+ pkg/mcp/resources_test.go                     |  31 ++-
+ pkg/mcp/testdata/toolsets-core-tools.json     |  12 +-
+ .../toolsets-full-tools-multicluster.json     |  12 +-
+ .../toolsets-full-tools-openshift.json        |  12 +-
+ pkg/mcp/testdata/toolsets-full-tools.json     |  12 +-
+ pkg/toolsets/core/pods.go                     |  11 +-
+ pkg/toolsets/core/receipt.go                  | 211 ++++++++++++++++--
+ pkg/toolsets/core/receipt_test.go             | 114 ++++++++++
+ pkg/toolsets/core/resources.go                |  26 ++-
+ 14 files changed, 521 insertions(+), 66 deletions(-)
+ create mode 100644 pkg/toolsets/core/receipt_test.go
+
+diff --git a/pkg/kubernetes/patch.go b/pkg/kubernetes/patch.go
+index 10c1372..71c965e 100644
+--- a/pkg/kubernetes/patch.go
++++ b/pkg/kubernetes/patch.go
+@@ -25,23 +25,39 @@ var PatchTypes = map[string]types.PatchType{
+ // patch carries it as a precondition: the API refuses the patch (409 Conflict) when the
+ // object has changed since that version was read.
+ func (c *Core) ResourcesPatch(ctx context.Context, gvk *schema.GroupVersionKind, namespace, name, patchType, patch, resourceVersion string) (*unstructured.Unstructured, error) {
++	record, err := c.ResourcesPatchRecorded(ctx, gvk, namespace, name, patchType, patch, resourceVersion, false)
++	return record.Result, err
++}
++
++// ResourcesPatchRecorded is ResourcesPatch with a WriteRecord. With recordChanges the
++// object is read just before the patch, so that the caller can report which fields the
++// patch changed; a read that fails only leaves the earlier state unknown.
++func (c *Core) ResourcesPatchRecorded(ctx context.Context, gvk *schema.GroupVersionKind, namespace, name, patchType, patch, resourceVersion string, recordChanges bool) (WriteRecord, error) {
++	var record WriteRecord
+ 	pt, ok := PatchTypes[patchType]
+ 	if !ok {
+-		return nil, fmt.Errorf("patchType must be one of strategic, merge or json, got %q", patchType)
++		return record, fmt.Errorf("patchType must be one of strategic, merge or json, got %q", patchType)
+ 	}
+ 	body, err := patchBody(pt, patch, resourceVersion)
+ 	if err != nil {
+-		return nil, err
++		return record, err
+ 	}
+ 	gvr, err := c.resourceFor(gvk)
+ 	if err != nil {
+-		return nil, err
++		return record, err
+ 	}
+ 	namespace, err = c.effectiveNamespace(gvk, namespace)
+ 	if err != nil {
+-		return nil, err
++		return record, err
++	}
++	client := c.DynamicClient().Resource(*gvr).Namespace(namespace)
++	if recordChanges {
++		if current, getErr := client.Get(ctx, name, metav1.GetOptions{}); getErr == nil {
++			record.Previous, record.PreviousKnown = current, true
++		}
+ 	}
+-	return c.DynamicClient().Resource(*gvr).Namespace(namespace).Patch(ctx, name, pt, body, metav1.PatchOptions{FieldManager: version.BinaryName})
++	record.Result, err = client.Patch(ctx, name, pt, body, metav1.PatchOptions{FieldManager: version.BinaryName})
++	return record, err
+ }
+ 
+ // patchBody converts a YAML or JSON patch to JSON and adds the resourceVersion
+diff --git a/pkg/kubernetes/pods.go b/pkg/kubernetes/pods.go
+index 928ae43..2e0314d 100644
+--- a/pkg/kubernetes/pods.go
++++ b/pkg/kubernetes/pods.go
+@@ -233,6 +233,16 @@ type PodsRunOptions struct {
+ // PodsRunWithOptions runs a Pod (and, with a port, a Service and Route) with a command,
+ // arguments and restart policy.
+ func (c *Core) PodsRunWithOptions(ctx context.Context, namespace, name, image string, port int32, opts PodsRunOptions) ([]*unstructured.Unstructured, error) {
++	records, err := c.PodsRunRecorded(ctx, namespace, name, image, port, opts)
++	if err != nil {
++		return nil, err
++	}
++	return Results(records), nil
++}
++
++// PodsRunRecorded is PodsRunWithOptions with a WriteRecord for each object written,
++// holding the object as it was before the write (nil when pods_run created it).
++func (c *Core) PodsRunRecorded(ctx context.Context, namespace, name, image string, port int32, opts PodsRunOptions) ([]WriteRecord, error) {
+ 	if name == "" {
+ 		name = version.BinaryName + "-run-" + rand.String(5)
+ 	}
+@@ -335,7 +345,7 @@ func (c *Core) PodsRunWithOptions(ctx context.Context, namespace, name, image st
+ 			return nil, fmt.Errorf("%s %s/%s already exists (created by an earlier pods_run); nothing was changed: choose another name, delete it first, or pass replace: true to re-apply over it (immutable Pod fields such as the command still need a delete)", gvk.Kind, u.GetNamespace(), u.GetName())
+ 		}
+ 	}
+-	return c.resourcesCreateOrUpdate(ctx, toCreate)
++	return c.resourcesApplyRecords(ctx, toCreate, ApplyOptions{Force: true, RecordChanges: true})
+ }
+ 
+ func (c *Core) PodsTop(ctx context.Context, options api.PodsTopOptions) (*metrics.PodMetricsList, error) {
+diff --git a/pkg/kubernetes/resources.go b/pkg/kubernetes/resources.go
+index 71b937e..fa73467 100644
+--- a/pkg/kubernetes/resources.go
++++ b/pkg/kubernetes/resources.go
+@@ -96,15 +96,51 @@ type ApplyOptions struct {
+ 	// It is a compensating action, not a transaction: objects that existed before and were
+ 	// changed are not restored, and a delete can itself fail. Both are reported.
+ 	RollbackOnFailure bool
++	// RecordChanges reads each object just before it is written and keeps a copy of what
++	// was sent, so that the caller can report which fields the write changed (see
++	// WriteRecord). A read that fails only leaves the earlier state unknown; it never
++	// fails the write.
++	RecordChanges bool
++}
++
++// WriteRecord is one written object, with what the call knew of it before the write.
++type WriteRecord struct {
++	// Result is the object as the API returned it after the write.
++	Result *unstructured.Unstructured
++	// Sent is the object as the call sent it (nil when not recorded, or for a patch).
++	Sent *unstructured.Unstructured
++	// Previous is the object as read just before the write: nil if it did not exist.
++	Previous *unstructured.Unstructured
++	// PreviousKnown says whether that read was made and answered (found or not found).
++	PreviousKnown bool
++}
++
++// Results returns the written objects of records, in order.
++func Results(records []WriteRecord) []*unstructured.Unstructured {
++	objs := make([]*unstructured.Unstructured, len(records))
++	for i, r := range records {
++		objs[i] = r.Result
++	}
++	return objs
+ }
+ 
+ // ResourcesApply parses a YAML or JSON manifest stream and writes every document.
+ func (c *Core) ResourcesApply(ctx context.Context, resource string, opts ApplyOptions) ([]*unstructured.Unstructured, error) {
++	records, err := c.ResourcesApplyRecorded(ctx, resource, opts)
++	if err != nil {
++		return nil, err
++	}
++	return Results(records), nil
++}
++
++// ResourcesApplyRecorded is ResourcesApply with a WriteRecord for every document. With
++// opts.RecordChanges each record also holds the object as it was before the write.
++func (c *Core) ResourcesApplyRecorded(ctx context.Context, resource string, opts ApplyOptions) ([]WriteRecord, error) {
+ 	parsedResources, err := ParseManifests(resource)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	return c.resourcesApply(ctx, parsedResources, opts)
++	return c.resourcesApplyRecords(ctx, parsedResources, opts)
+ }
+ 
+ // ResourcesApplyObject server-side applies one object that the caller built as
+@@ -414,6 +450,14 @@ func (c *Core) resourcesCreateOrUpdate(ctx context.Context, resources []*unstruc
+ }
+ 
+ func (c *Core) resourcesApply(ctx context.Context, resources []*unstructured.Unstructured, opts ApplyOptions) ([]*unstructured.Unstructured, error) {
++	records, err := c.resourcesApplyRecords(ctx, resources, opts)
++	if err != nil {
++		return nil, err
++	}
++	return Results(records), nil
++}
++
++func (c *Core) resourcesApplyRecords(ctx context.Context, resources []*unstructured.Unstructured, opts ApplyOptions) ([]WriteRecord, error) {
+ 	// Resolve every document's resource and namespace before the first write, so an
+ 	// unknown kind or apiVersion fails the call with nothing applied. A kind defined by a
+ 	// CustomResourceDefinition earlier in the same input cannot resolve yet; it is
+@@ -457,13 +501,18 @@ func (c *Core) resourcesApply(ctx context.Context, resources []*unstructured.Uns
+ 			return nil, err
+ 		}
+ 		if opts.DryRun {
+-			return dryRun, nil
++			records := make([]WriteRecord, len(dryRun))
++			for i, obj := range dryRun {
++				records[i] = WriteRecord{Result: obj}
++			}
++			return records, nil
+ 		}
+ 	}
+ 
+ 	// existed[i] is known only when a rollback may be needed: it decides which objects
+ 	// this call created (and may delete again) and which it changed (and cannot restore).
+ 	existed := make([]bool, len(resources))
++	records := make([]WriteRecord, len(resources))
+ 	partial := func(i int, err error) error {
+ 		if len(resources) == 1 {
+ 			return err
+@@ -510,24 +559,36 @@ func (c *Core) resourcesApply(ctx context.Context, resources []*unstructured.Uns
+ 		}
+ 		obj.SetNamespace(namespaces[i])
+ 		client := c.DynamicClient().Resource(*gvrs[i]).Namespace(namespaces[i])
+-		if opts.RollbackOnFailure {
+-			_, getErr := client.Get(ctx, obj.GetName(), metav1.GetOptions{})
+-			if getErr != nil && !apierrors.IsNotFound(getErr) {
++		if opts.RecordChanges {
++			records[i].Sent = obj.DeepCopy()
++		}
++		if opts.RollbackOnFailure || opts.RecordChanges {
++			current, getErr := client.Get(ctx, obj.GetName(), metav1.GetOptions{})
++			switch {
++			case getErr == nil:
++				records[i].Previous, records[i].PreviousKnown = current, true
++			case apierrors.IsNotFound(getErr):
++				records[i].PreviousKnown = true
++			case opts.RollbackOnFailure:
+ 				return nil, partial(i, getErr)
+ 			}
+ 			existed[i] = getErr == nil
+ 		}
++		if !opts.RecordChanges {
++			records[i].Previous, records[i].PreviousKnown = nil, false
++		}
+ 		applied, err := c.writeDocument(ctx, client, obj, outcomes[i], opts, false)
+ 		if err != nil {
+ 			return nil, partial(i, err)
+ 		}
+ 		resources[i] = applied
++		records[i].Result = applied
+ 		// Clear the cache to ensure the next operation is performed on the latest exposed APIs (will change after the CRD creation)
+ 		if gvk.Kind == "CustomResourceDefinition" {
+ 			c.RESTMapper().Reset()
+ 		}
+ 	}
+-	return resources, nil
++	return records, nil
+ }
+ 
+ // writeDocument creates or applies one object, as a server-side dry run if dryRun is set.
+diff --git a/pkg/mcp/pods_run_test.go b/pkg/mcp/pods_run_test.go
+index 249947c..1b9bc2a 100644
+--- a/pkg/mcp/pods_run_test.go
++++ b/pkg/mcp/pods_run_test.go
+@@ -196,6 +196,22 @@ func (s *PodsRunSuite) TestPodsRunReturnsReceiptByDefault() {
+ 		s.NotContains(text, "spec:")
+ 		s.NotContains(text, "status:")
+ 	})
++	s.Run("lists the fields it set on the created Pod", func() {
++		s.Equal(true, decoded[0].Object["created"])
++		changed, ok := decoded[0].Object["changed"].(map[string]interface{})
++		s.Require().Truef(ok, "changed: %v", decoded[0].Object["changed"])
++		s.Equal("nginx", changed["spec.containers[0].image"])
++	})
++}
++
++func (s *PodsRunSuite) TestPodsRunCompactReceipt() {
++	s.InitMcpClient()
++	toolResult, err := s.CallTool("pods_run", map[string]interface{}{"image": "nginx", "name": "compact-pod", "output": "compact"})
++	s.Require().NoError(err)
++	s.Require().Falsef(toolResult.IsError, "call tool failed: %v", toolResult.Content)
++	text := toolResult.Content[0].(*mcp.TextContent).Text
++	s.NotContains(text, "changed")
++	s.NotContains(text, "image")
+ }
+ 
+ func (s *PodsRunSuite) TestPodsRunDenied() {
+diff --git a/pkg/mcp/resources_patch_test.go b/pkg/mcp/resources_patch_test.go
+index b1b6715..8cb23d1 100644
+--- a/pkg/mcp/resources_patch_test.go
++++ b/pkg/mcp/resources_patch_test.go
+@@ -1,6 +1,7 @@
+ package mcp
+ 
+ import (
++	"strings"
+ 	"testing"
+ 
+ 	"github.com/modelcontextprotocol/go-sdk/mcp"
+@@ -8,8 +9,10 @@ import (
+ 	appsv1 "k8s.io/api/apps/v1"
+ 	corev1 "k8s.io/api/core/v1"
+ 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
++	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+ 	"k8s.io/client-go/kubernetes"
+ 	"k8s.io/utils/ptr"
++	"sigs.k8s.io/yaml"
+ 
+ 	"github.com/containers/kubernetes-mcp-server/internal/test"
+ )
+@@ -80,6 +83,22 @@ func (s *ResourcesPatchSuite) TestResourcesPatch() {
+ 		s.Contains(text, "# ConfigMap cm-to-patch patched (merge patch)")
+ 		s.Contains(text, "resourceVersion:")
+ 		s.NotContains(text, "LOG_LEVEL")
++		s.Run("naming the field the patch changed and its new value", func() {
++			var decoded []unstructured.Unstructured
++			s.Require().NoError(yaml.Unmarshal([]byte(strings.SplitN(text, "\n", 2)[1]), &decoded))
++			s.Require().Len(decoded, 1)
++			s.Equal(map[string]interface{}{"data.A": "b"}, decoded[0].Object["changed"])
++		})
++	})
++	s.Run("returns a compact receipt with output: compact", func() {
++		result, err := s.CallTool("resources_patch", map[string]interface{}{
++			"apiVersion": "v1", "kind": "ConfigMap", "namespace": "default", "name": "cm-to-patch",
++			"patchType": "merge", "patch": `{"data":{"A":"c"}}`, "output": "compact",
++		})
++		s.Require().NoError(err)
++		text := result.Content[0].(*mcp.TextContent).Text
++		s.Contains(text, "resourceVersion:")
++		s.NotContains(text, "changed")
+ 	})
+ 	s.Run("an unknown patchType is refused", func() {
+ 		result, err := s.CallTool("resources_patch", map[string]interface{}{
+diff --git a/pkg/mcp/resources_test.go b/pkg/mcp/resources_test.go
+index 50d4e25..6b78360 100644
+--- a/pkg/mcp/resources_test.go
++++ b/pkg/mcp/resources_test.go
+@@ -1420,7 +1420,36 @@ func (s *ResourcesSuite) TestResourcesWriteReceipts() {
+ 		s.Require().Len(decoded, 1)
+ 		s.Equal("a-cm-receipt", decoded[0].GetName())
+ 		s.NotEmpty(decoded[0].GetResourceVersion())
+-		s.NotContains(text, "xxxx", "a receipt carries no data")
++		s.Run("a created object lists the fields the call set", func() {
++			s.Equal(true, decoded[0].Object["created"])
++			s.Equal(map[string]interface{}{"data.big": strings.Repeat("x", 200)}, decoded[0].Object["changed"])
++		})
++	})
++	s.Run("an update's receipt lists only the fields it changed, with their new values", func() {
++		update := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: a-cm-receipt\n  namespace: default\ndata:\n  big: " + strings.Repeat("x", 200) + "\n  level: debug\n"
++		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{"resource": update})
++		s.Require().NoError(err)
++		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++		text := result.Content[0].(*mcp.TextContent).Text
++		var decoded []unstructured.Unstructured
++		s.Require().NoError(yaml.Unmarshal([]byte(text), &decoded))
++		s.Require().Len(decoded, 1)
++		s.Equal(map[string]interface{}{"data.level": "debug"}, decoded[0].Object["changed"])
++		s.NotContains(decoded[0].Object, "created")
++		s.NotContains(text, "xxxx", "an unchanged field is not echoed")
++		s.Contains(text, "# Receipt: identity and version of each object, and under changed each field this call changed")
++	})
++	s.Run("resources_create_or_update with output: compact returns identity and version only", func() {
++		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{"resource": cm, "output": "compact"})
++		s.Require().NoError(err)
++		s.Require().Falsef(result.IsError, "call tool failed: %v", result.Content)
++		text := result.Content[0].(*mcp.TextContent).Text
++		var decoded []unstructured.Unstructured
++		s.Require().NoError(yaml.Unmarshal([]byte(text), &decoded))
++		s.Require().Len(decoded, 1)
++		s.NotEmpty(decoded[0].GetResourceVersion())
++		s.NotContains(text, "changed:")
++		s.NotContains(text, "xxxx", "a compact receipt carries no data")
+ 	})
+ 	s.Run("resources_create_or_update with output: full returns the object", func() {
+ 		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{"resource": cm, "output": "full"})
+diff --git a/pkg/mcp/testdata/toolsets-core-tools.json b/pkg/mcp/testdata/toolsets-core-tools.json
+index 3e74c76..51a95b0 100644
+--- a/pkg/mcp/testdata/toolsets-core-tools.json
++++ b/pkg/mcp/testdata/toolsets-core-tools.json
+@@ -935,9 +935,10 @@
+           "type": "string"
+         },
+         "output": {
+-          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation, and under 'changed' each field this call changed with its new value (null: removed); 'compact' gives the identity and version only; 'full' gives the whole object as stored, as earlier versions did.",
+           "enum": [
+             "receipt",
++            "compact",
+             "full"
+           ],
+           "type": "string"
+@@ -1138,9 +1139,10 @@
+           "type": "string"
+         },
+         "output": {
+-          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation, and under 'changed' each field this call changed with its new value (null: removed); 'compact' gives the identity and version only; 'full' gives the whole object as stored, as earlier versions did.",
+           "enum": [
+             "receipt",
++            "compact",
+             "full"
+           ],
+           "type": "string"
+@@ -1594,9 +1596,10 @@
+           "type": "string"
+         },
+         "output": {
+-          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation, and under 'changed' each field this call changed with its new value (null: removed); 'compact' gives the identity and version only; 'full' gives the whole object as stored, as earlier versions did.",
+           "enum": [
+             "receipt",
++            "compact",
+             "full"
+           ],
+           "type": "string"
+@@ -1806,9 +1809,10 @@
+           "type": "string"
+         },
+         "output": {
+-          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation, and under 'changed' each field this call changed with its new value (null: removed); 'compact' gives the identity and version only; 'full' gives the whole object as stored, as earlier versions did.",
+           "enum": [
+             "receipt",
++            "compact",
+             "full"
+           ],
+           "type": "string"
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+index 1d35215..7ce3f96 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-multicluster.json
+@@ -1040,9 +1040,10 @@
+           "type": "string"
+         },
+         "output": {
+-          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation, and under 'changed' each field this call changed with its new value (null: removed); 'compact' gives the identity and version only; 'full' gives the whole object as stored, as earlier versions did.",
+           "enum": [
+             "receipt",
++            "compact",
+             "full"
+           ],
+           "type": "string"
+@@ -1255,9 +1256,10 @@
+           "type": "string"
+         },
+         "output": {
+-          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation, and under 'changed' each field this call changed with its new value (null: removed); 'compact' gives the identity and version only; 'full' gives the whole object as stored, as earlier versions did.",
+           "enum": [
+             "receipt",
++            "compact",
+             "full"
+           ],
+           "type": "string"
+@@ -1731,9 +1733,10 @@
+           "type": "string"
+         },
+         "output": {
+-          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation, and under 'changed' each field this call changed with its new value (null: removed); 'compact' gives the identity and version only; 'full' gives the whole object as stored, as earlier versions did.",
+           "enum": [
+             "receipt",
++            "compact",
+             "full"
+           ],
+           "type": "string"
+@@ -1951,9 +1954,10 @@
+           "type": "string"
+         },
+         "output": {
+-          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation, and under 'changed' each field this call changed with its new value (null: removed); 'compact' gives the identity and version only; 'full' gives the whole object as stored, as earlier versions did.",
+           "enum": [
+             "receipt",
++            "compact",
+             "full"
+           ],
+           "type": "string"
+diff --git a/pkg/mcp/testdata/toolsets-full-tools-openshift.json b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+index fcb6d3b..991b695 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools-openshift.json
++++ b/pkg/mcp/testdata/toolsets-full-tools-openshift.json
+@@ -962,9 +962,10 @@
+           "type": "string"
+         },
+         "output": {
+-          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation, and under 'changed' each field this call changed with its new value (null: removed); 'compact' gives the identity and version only; 'full' gives the whole object as stored, as earlier versions did.",
+           "enum": [
+             "receipt",
++            "compact",
+             "full"
+           ],
+           "type": "string"
+@@ -1165,9 +1166,10 @@
+           "type": "string"
+         },
+         "output": {
+-          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation, and under 'changed' each field this call changed with its new value (null: removed); 'compact' gives the identity and version only; 'full' gives the whole object as stored, as earlier versions did.",
+           "enum": [
+             "receipt",
++            "compact",
+             "full"
+           ],
+           "type": "string"
+@@ -1621,9 +1623,10 @@
+           "type": "string"
+         },
+         "output": {
+-          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation, and under 'changed' each field this call changed with its new value (null: removed); 'compact' gives the identity and version only; 'full' gives the whole object as stored, as earlier versions did.",
+           "enum": [
+             "receipt",
++            "compact",
+             "full"
+           ],
+           "type": "string"
+@@ -1833,9 +1836,10 @@
+           "type": "string"
+         },
+         "output": {
+-          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation, and under 'changed' each field this call changed with its new value (null: removed); 'compact' gives the identity and version only; 'full' gives the whole object as stored, as earlier versions did.",
+           "enum": [
+             "receipt",
++            "compact",
+             "full"
+           ],
+           "type": "string"
+diff --git a/pkg/mcp/testdata/toolsets-full-tools.json b/pkg/mcp/testdata/toolsets-full-tools.json
+index fcb6d3b..991b695 100644
+--- a/pkg/mcp/testdata/toolsets-full-tools.json
++++ b/pkg/mcp/testdata/toolsets-full-tools.json
+@@ -962,9 +962,10 @@
+           "type": "string"
+         },
+         "output": {
+-          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation, and under 'changed' each field this call changed with its new value (null: removed); 'compact' gives the identity and version only; 'full' gives the whole object as stored, as earlier versions did.",
+           "enum": [
+             "receipt",
++            "compact",
+             "full"
+           ],
+           "type": "string"
+@@ -1165,9 +1166,10 @@
+           "type": "string"
+         },
+         "output": {
+-          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation, and under 'changed' each field this call changed with its new value (null: removed); 'compact' gives the identity and version only; 'full' gives the whole object as stored, as earlier versions did.",
+           "enum": [
+             "receipt",
++            "compact",
+             "full"
+           ],
+           "type": "string"
+@@ -1621,9 +1623,10 @@
+           "type": "string"
+         },
+         "output": {
+-          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation, and under 'changed' each field this call changed with its new value (null: removed); 'compact' gives the identity and version only; 'full' gives the whole object as stored, as earlier versions did.",
+           "enum": [
+             "receipt",
++            "compact",
+             "full"
+           ],
+           "type": "string"
+@@ -1833,9 +1836,10 @@
+           "type": "string"
+         },
+         "output": {
+-          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++          "description": "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, namespace, name, uid, resourceVersion and generation, and under 'changed' each field this call changed with its new value (null: removed); 'compact' gives the identity and version only; 'full' gives the whole object as stored, as earlier versions did.",
+           "enum": [
+             "receipt",
++            "compact",
+             "full"
+           ],
+           "type": "string"
+diff --git a/pkg/toolsets/core/pods.go b/pkg/toolsets/core/pods.go
+index b9a23fc..87c88a2 100644
+--- a/pkg/toolsets/core/pods.go
++++ b/pkg/toolsets/core/pods.go
+@@ -638,7 +638,7 @@ func podsRun(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to run pod: port must be between 1 and 65535, got %d", portValue)), nil
+ 	}
+ 	port := int32(portValue)
+-	full, err := wantFullOutput(p)
++	mode, err := outputMode(p)
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to run pod: %w", err)), nil
+ 	}
+@@ -664,17 +664,14 @@ func podsRun(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 	default:
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to run pod: restartPolicy must be Always, OnFailure or Never, got %q", opts.RestartPolicy)), nil
+ 	}
+-	resources, err := kubernetes.NewCore(params).PodsRunWithOptions(params, ns, name, image, port, opts)
++	records, err := kubernetes.NewCore(params).PodsRunRecorded(params, ns, name, image, port, opts)
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to run pod %s in namespace %s: %w", name, ns, err)), nil
+ 	}
+-	marshalledYaml, err := writeResultYaml(resources, full)
++	marshalledYaml, err := writeResultYaml(records, mode)
+ 	if err != nil {
+ 		err = fmt.Errorf("failed to run pod: %w", err)
+ 	}
+-	note := receiptNote
+-	if full {
+-		note = ""
+-	}
++	note := receiptNote(mode)
+ 	return api.NewToolCallResult("# The following resources (YAML) have been created or updated successfully\n"+note+marshalledYaml, err), nil
+ }
+diff --git a/pkg/toolsets/core/receipt.go b/pkg/toolsets/core/receipt.go
+index 99c9a71..1926b6f 100644
+--- a/pkg/toolsets/core/receipt.go
++++ b/pkg/toolsets/core/receipt.go
+@@ -2,7 +2,10 @@ package core
+ 
+ import (
+ 	"fmt"
++	"reflect"
++	"slices"
+ 	"strconv"
++	"strings"
+ 
+ 	"github.com/google/jsonschema-go/jsonschema"
+ 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+@@ -15,31 +18,31 @@ import (
+ 
+ const (
+ 	outputReceipt = "receipt"
++	outputCompact = "compact"
+ 	outputFull    = "full"
+ )
+ 
+ // outputProperty is the schema of the optional `output` argument of write tools.
+ var outputProperty = &jsonschema.Schema{
+ 	Type: "string",
+-	Enum: []any{outputReceipt, outputFull},
++	Enum: []any{outputReceipt, outputCompact, outputFull},
+ 	Description: "What the result shows of each written object: 'receipt' (default) gives apiVersion, kind, " +
+-		"namespace, name, uid, resourceVersion and generation; 'full' gives the whole object as stored, as earlier versions did.",
++		"namespace, name, uid, resourceVersion and generation, and under 'changed' each field this call changed with its new value " +
++		"(null: removed); 'compact' gives the identity and version only; 'full' gives the whole object as stored, as earlier versions did.",
+ }
+ 
+-// wantFullOutput reads the `output` argument.
+-func wantFullOutput(p *api.Params) (bool, error) {
++// outputMode reads the `output` argument.
++func outputMode(p *api.Params) (string, error) {
+ 	switch v := p.OptionalString("output", outputReceipt); v {
+-	case outputReceipt:
+-		return false, p.Err()
+-	case outputFull:
+-		return true, p.Err()
++	case outputReceipt, outputCompact, outputFull:
++		return v, p.Err()
+ 	default:
+-		return false, fmt.Errorf("output must be %q or %q, got %q", outputReceipt, outputFull, v)
++		return outputReceipt, fmt.Errorf("output must be %q, %q or %q, got %q", outputReceipt, outputCompact, outputFull, v)
+ 	}
+ }
+ 
+ // receiptObject keeps an object's identity and version: what a caller needs to refer
+-// to it again or to send a version precondition. Receipts carry no spec, data or status.
++// to it again or to send a version precondition.
+ func receiptObject(obj *unstructured.Unstructured) map[string]any {
+ 	metadata := map[string]any{"name": obj.GetName()}
+ 	if ns := obj.GetNamespace(); ns != "" {
+@@ -64,19 +67,191 @@ func receiptObject(obj *unstructured.Unstructured) map[string]any {
+ 	}
+ }
+ 
+-// writeResultYaml renders written objects: receipts by default, whole objects with output: full.
+-func writeResultYaml(objs []*unstructured.Unstructured, full bool) (string, error) {
+-	if full {
+-		return output.MarshalYaml(objs)
++const (
++	// receiptMaxFields bounds the fields a receipt lists; the rest are counted.
++	receiptMaxFields = 50
++	// receiptMaxValue bounds a string value shown in a receipt, in characters.
++	receiptMaxValue = 256
++)
++
++// receiptWithChanges is a receipt plus the fields the write changed, with their new values:
++//   - the object existed: every field whose value differs between the read made just before
++//     the write and the API's answer ("changed"; null for a removed field);
++//   - the write created it: every field the call sent, with the value stored ("changed",
++//     and "created: true");
++//   - the earlier state could not be read: every field the call sent, with the value
++//     stored ("set"), since which of them changed is not known.
++//
++// Server-maintained metadata (resourceVersion, generation, managedFields, uid,
++// creationTimestamp) and status are left out: the receipt's identity carries the first.
++func receiptWithChanges(r kubernetes.WriteRecord) map[string]any {
++	receipt := receiptObject(r.Result)
++	fields := map[string]any{}
++	key := "changed"
++	switch {
++	case r.PreviousKnown && r.Previous != nil:
++		diffFields("", r.Previous.Object, r.Result.Object, fields)
++	case r.PreviousKnown && r.Sent != nil:
++		receipt["created"] = true
++		sentFields("", r.Sent.Object, r.Result.Object, fields)
++	case r.Sent != nil:
++		key = "set"
++		sentFields("", r.Sent.Object, r.Result.Object, fields)
++	default:
++		return receipt
+ 	}
+-	receipts := make([]map[string]any, 0, len(objs))
+-	for _, obj := range objs {
+-		receipts = append(receipts, receiptObject(obj))
++	if len(fields) > receiptMaxFields {
++		names := make([]string, 0, len(fields))
++		for name := range fields {
++			names = append(names, name)
++		}
++		slices.Sort(names)
++		for _, name := range names[receiptMaxFields:] {
++			delete(fields, name)
++		}
++		receipt[key+"NotShown"] = len(names) - receiptMaxFields
++	}
++	receipt[key] = fields
++	return receipt
++}
++
++// receiptSkipped reports the paths a receipt never lists.
++func receiptSkipped(path string) bool {
++	switch path {
++	case "apiVersion", "kind", "status", "metadata.name", "metadata.namespace", "metadata.resourceVersion",
++		"metadata.generation", "metadata.managedFields", "metadata.uid", "metadata.creationTimestamp", "metadata.selfLink":
++		return true
++	}
++	return false
++}
++
++// fieldPath appends a map key to a field path: dotted, or ["key"] when the key holds
++// a dot, bracket, quote or space (label keys such as app.kubernetes.io/name, ConfigMap keys).
++func fieldPath(path, key string) string {
++	if key == "" || strings.ContainsAny(key, ".[]\" \t") {
++		return path + "[" + strconv.Quote(key) + "]"
++	}
++	if path == "" {
++		return key
++	}
++	return path + "." + key
++}
++
++func indexPath(path string, i int) string {
++	return path + "[" + strconv.Itoa(i) + "]"
++}
++
++// receiptValue shortens long strings; other values are shown as stored.
++func receiptValue(v any) any {
++	if s, ok := v.(string); ok {
++		if r := []rune(s); len(r) > receiptMaxValue {
++			return string(r[:receiptMaxValue]) + fmt.Sprintf("… (%d characters in all)", len(r))
++		}
++	}
++	return v
++}
++
++// diffFields records in out each leaf field whose value differs between before and after.
++func diffFields(path string, before, after any, out map[string]any) {
++	if receiptSkipped(path) {
++		return
++	}
++	switch a := after.(type) {
++	case map[string]any:
++		b, isMap := before.(map[string]any)
++		if len(a) == 0 && !isMap {
++			out[path] = a
++			return
++		}
++		for k, v := range a {
++			diffFields(fieldPath(path, k), b[k], v, out)
++		}
++		for k := range b {
++			if _, kept := a[k]; !kept && !receiptSkipped(fieldPath(path, k)) {
++				out[fieldPath(path, k)] = nil
++			}
++		}
++	case []any:
++		b, isList := before.([]any)
++		if len(a) == 0 && (!isList || len(b) > 0) {
++			out[path] = a
++			return
++		}
++		for i, v := range a {
++			var old any
++			if i < len(b) {
++				old = b[i]
++			}
++			diffFields(indexPath(path, i), old, v, out)
++		}
++		for i := len(a); i < len(b); i++ {
++			out[indexPath(path, i)] = nil
++		}
++	default:
++		if !reflect.DeepEqual(before, after) {
++			out[path] = receiptValue(after)
++		}
++	}
++}
++
++// sentFields records in out each leaf field of sent, with the value the API stored there
++// (the sent value if the answer does not hold that path). Null and empty values are left
++// out: objects built from Go types carry many (status: {}, resources: {}).
++func sentFields(path string, sent, stored any, out map[string]any) {
++	if sent == nil || receiptSkipped(path) {
++		return
++	}
++	switch s := sent.(type) {
++	case map[string]any:
++		st, _ := stored.(map[string]any)
++		for k, v := range s {
++			sentFields(fieldPath(path, k), v, st[k], out)
++		}
++	case []any:
++		st, _ := stored.([]any)
++		for i, v := range s {
++			var at any
++			if i < len(st) {
++				at = st[i]
++			}
++			sentFields(indexPath(path, i), v, at, out)
++		}
++	default:
++		if stored != nil {
++			out[path] = receiptValue(stored)
++		} else {
++			out[path] = receiptValue(s)
++		}
++	}
++}
++
++// writeResultYaml renders written objects: receipts with the changed fields by default,
++// identity and version only with output: compact, whole objects with output: full.
++func writeResultYaml(records []kubernetes.WriteRecord, mode string) (string, error) {
++	if mode == outputFull {
++		return output.MarshalYaml(kubernetes.Results(records))
++	}
++	receipts := make([]map[string]any, 0, len(records))
++	for _, r := range records {
++		if mode == outputCompact {
++			receipts = append(receipts, receiptObject(r.Result))
++		} else {
++			receipts = append(receipts, receiptWithChanges(r))
++		}
+ 	}
+ 	return output.MarshalYaml(receipts)
+ }
+ 
+-const receiptNote = "# Receipt: identity and version of each object; pass output: full for the whole objects\n"
++// receiptNote is the line above a write result that says what the result shows.
++func receiptNote(mode string) string {
++	switch mode {
++	case outputCompact:
++		return "# Receipt: identity and version of each object; pass output: full for the whole objects\n"
++	case outputReceipt:
++		return "# Receipt: identity and version of each object, and under changed each field this call changed with its new value (null: removed); pass output: full for the whole objects\n"
++	}
++	return ""
++}
+ 
+ // scaleResultText renders a resources_scale result. A change is stated as from -> to;
+ // the status shown was read with the change, before the controller acted on it.
+diff --git a/pkg/toolsets/core/receipt_test.go b/pkg/toolsets/core/receipt_test.go
+new file mode 100644
+index 0000000..3792aa3
+--- /dev/null
++++ b/pkg/toolsets/core/receipt_test.go
+@@ -0,0 +1,114 @@
++package core
++
++import (
++	"fmt"
++	"strings"
++	"testing"
++
++	"github.com/stretchr/testify/suite"
++	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
++
++	"github.com/containers/kubernetes-mcp-server/pkg/kubernetes"
++)
++
++type ReceiptSuite struct {
++	suite.Suite
++}
++
++func configMap(rv string, data map[string]any, labels map[string]any) *unstructured.Unstructured {
++	metadata := map[string]any{"name": "cm", "namespace": "default", "uid": "u-1", "resourceVersion": rv}
++	if labels != nil {
++		metadata["labels"] = labels
++	}
++	obj := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": metadata}
++	if data != nil {
++		obj["data"] = data
++	}
++	return &unstructured.Unstructured{Object: obj}
++}
++
++func (s *ReceiptSuite) TestUpdateListsOnlyTheChangedFields() {
++	before := configMap("1", map[string]any{"a": "1", "b": "2", "gone": "x"}, map[string]any{"app.kubernetes.io/name": "web"})
++	after := configMap("2", map[string]any{"a": "1", "b": "3", "new.key": "n"}, map[string]any{"app.kubernetes.io/name": "web"})
++	receipt := receiptWithChanges(kubernetes.WriteRecord{Previous: before, PreviousKnown: true, Result: after})
++	s.Equal(map[string]any{"data.b": "3", `data["new.key"]`: "n", "data.gone": nil}, receipt["changed"])
++	s.NotContains(receipt, "created")
++	s.Equal("2", receipt["metadata"].(map[string]any)["resourceVersion"], "the receipt keeps the new version")
++}
++
++func (s *ReceiptSuite) TestUnchangedApplyListsNoField() {
++	obj := configMap("1", map[string]any{"a": "1"}, nil)
++	receipt := receiptWithChanges(kubernetes.WriteRecord{Previous: obj, PreviousKnown: true, Result: obj.DeepCopy()})
++	s.Equal(map[string]any{}, receipt["changed"])
++}
++
++func (s *ReceiptSuite) TestCreateListsTheSentFieldsWithStoredValues() {
++	sent := configMap("", map[string]any{"a": "1"}, map[string]any{"tier": "x"})
++	stored := configMap("7", map[string]any{"a": "1"}, map[string]any{"tier": "x"})
++	stored.Object["metadata"].(map[string]any)["managedFields"] = []any{map[string]any{"manager": "m"}}
++	receipt := receiptWithChanges(kubernetes.WriteRecord{Sent: sent, PreviousKnown: true, Result: stored})
++	s.Equal(true, receipt["created"])
++	s.Equal(map[string]any{"data.a": "1", "metadata.labels.tier": "x"}, receipt["changed"])
++}
++
++func (s *ReceiptSuite) TestUnknownEarlierStateListsTheSentFieldsAsSet() {
++	sent := configMap("", map[string]any{"a": "1"}, nil)
++	receipt := receiptWithChanges(kubernetes.WriteRecord{Sent: sent, Result: configMap("3", map[string]any{"a": "1", "b": "2"}, nil)})
++	s.Equal(map[string]any{"data.a": "1"}, receipt["set"])
++	s.NotContains(receipt, "changed")
++}
++
++func (s *ReceiptSuite) TestListsAreComparedByIndex() {
++	before := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{"containers": []any{
++		map[string]any{"name": "app", "image": "nginx:1"}, map[string]any{"name": "side", "image": "busybox"},
++	}}}}
++	after := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{"containers": []any{
++		map[string]any{"name": "app", "image": "nginx:2"},
++	}}}}
++	receipt := receiptWithChanges(kubernetes.WriteRecord{Previous: before, PreviousKnown: true, Result: after})
++	s.Equal(map[string]any{"spec.containers[0].image": "nginx:2", "spec.containers[1]": nil}, receipt["changed"])
++}
++
++func (s *ReceiptSuite) TestStatusAndServerMetadataAreLeftOut() {
++	before := configMap("1", map[string]any{"a": "1"}, nil)
++	after := configMap("2", map[string]any{"a": "1"}, nil)
++	after.Object["status"] = map[string]any{"phase": "Ready"}
++	after.Object["metadata"].(map[string]any)["generation"] = int64(2)
++	receipt := receiptWithChanges(kubernetes.WriteRecord{Previous: before, PreviousKnown: true, Result: after})
++	s.Equal(map[string]any{}, receipt["changed"])
++}
++
++func (s *ReceiptSuite) TestLongValuesAndManyFieldsStayCompact() {
++	data := map[string]any{"big": strings.Repeat("x", 1000)}
++	for i := 0; i < 60; i++ {
++		data[fmt.Sprintf("k%03d", i)] = "v"
++	}
++	receipt := receiptWithChanges(kubernetes.WriteRecord{Sent: configMap("", data, nil), PreviousKnown: true, Result: configMap("1", data, nil)})
++	changed := receipt["changed"].(map[string]any)
++	s.Len(changed, receiptMaxFields)
++	s.Equal(61-receiptMaxFields, receipt["changedNotShown"])
++	big := changed["data.big"].(string)
++	s.True(strings.HasPrefix(big, strings.Repeat("x", receiptMaxValue)+"…"))
++	s.Contains(big, "(1000 characters in all)")
++}
++
++func (s *ReceiptSuite) TestOutputModes() {
++	before := configMap("1", map[string]any{"a": "1"}, nil)
++	after := configMap("2", map[string]any{"a": "2"}, nil)
++	records := []kubernetes.WriteRecord{{Previous: before, PreviousKnown: true, Result: after}}
++	receipt, err := writeResultYaml(records, outputReceipt)
++	s.Require().NoError(err)
++	s.Contains(receipt, "data.a: \"2\"")
++	compact, err := writeResultYaml(records, outputCompact)
++	s.Require().NoError(err)
++	s.NotContains(compact, "data.a")
++	s.NotContains(compact, "changed")
++	full, err := writeResultYaml(records, outputFull)
++	s.Require().NoError(err)
++	s.Contains(full, "a: \"2\"")
++	s.NotContains(full, "changed")
++}
++
++func TestReceipt(t *testing.T) {
++	suite.Run(t, new(ReceiptSuite))
++}
+diff --git a/pkg/toolsets/core/resources.go b/pkg/toolsets/core/resources.go
+index d8f996b..5263d3d 100644
+--- a/pkg/toolsets/core/resources.go
++++ b/pkg/toolsets/core/resources.go
+@@ -657,7 +657,7 @@ func resourcesCreateOrUpdate(params api.ToolHandlerParams) (*api.ToolCallResult,
+ 		return api.NewToolCallResult("", fmt.Errorf("resource is not a string")), nil
+ 	}
+ 
+-	full, err := wantFullOutput(api.WrapParams(params))
++	mode, err := outputMode(api.WrapParams(params))
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to create or update resources: %w", err)), nil
+ 	}
+@@ -687,23 +687,24 @@ func resourcesCreateOrUpdate(params api.ToolHandlerParams) (*api.ToolCallResult,
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to create or update resources: %w", err)), nil
+ 	}
+ 
+-	resources, err := kubernetes.NewCore(params).ResourcesApply(params, r, opts)
++	opts.RecordChanges = mode == outputReceipt && !opts.DryRun
++	records, err := kubernetes.NewCore(params).ResourcesApplyRecorded(params, r, opts)
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to create or update resources: %w", err)), nil
+ 	}
+-	marshalledYaml, err := writeResultYaml(resources, full)
++	if opts.DryRun && mode == outputReceipt {
++		mode = outputCompact
++	}
++	marshalledYaml, err := writeResultYaml(records, mode)
+ 	if err != nil {
+ 		err = fmt.Errorf("failed to create or update resources: %w", err)
+ 	}
+-	note := receiptNote
+-	if full {
+-		note = ""
+-	}
++	note := receiptNote(mode)
+ 	if opts.DryRun {
+ 		return api.NewToolCallResult("# Dry run (server-side, dryRun=All): every document was accepted; nothing was written\n"+note+marshalledYaml, err), nil
+ 	}
+ 	if wait > 0 {
+-		note += waitForObjects(params, resources, wait)
++		note += waitForObjects(params, kubernetes.Results(records), wait)
+ 	}
+ 	return api.NewToolCallResult("# The following resources (YAML) have been created or updated successfully\n"+note+marshalledYaml, err), nil
+ }
+@@ -719,18 +720,18 @@ func resourcesPatch(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 	patchType := p.RequiredString("patchType")
+ 	patch := p.RequiredString("patch")
+ 	resourceVersion := p.OptionalString("resourceVersion", "")
+-	full, outputErr := wantFullOutput(p)
++	mode, outputErr := outputMode(p)
+ 	if err := errors.Join(p.Err(), outputErr); err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to patch resource: %w", err)), nil
+ 	}
+-	patched, err := kubernetes.NewCore(params).ResourcesPatch(params, gvk, ns, name, patchType, patch, resourceVersion)
++	record, err := kubernetes.NewCore(params).ResourcesPatchRecorded(params, gvk, ns, name, patchType, patch, resourceVersion, mode == outputReceipt)
+ 	if err != nil {
+ 		if resourceVersion != "" && apierrors.IsConflict(err) {
+ 			err = fmt.Errorf("%w (the object changed after resourceVersion %s was read: read it again and rebuild the patch)", err, resourceVersion)
+ 		}
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to patch resource: %w", err)), nil
+ 	}
+-	text, err := writeResultYaml([]*unstructured.Unstructured{patched}, full)
++	text, err := writeResultYaml([]kubernetes.WriteRecord{record}, mode)
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to patch resource: %w", err)), nil
+ 	}
+@@ -893,10 +894,11 @@ func resourcesScale(params api.ToolHandlerParams) (*api.ToolCallResult, error) {
+ 		}
+ 	}
+ 
+-	full, err := wantFullOutput(api.WrapParams(params))
++	mode, err := outputMode(api.WrapParams(params))
+ 	if err != nil {
+ 		return api.NewToolCallResult("", fmt.Errorf("failed to get/update resource scale: %w", err)), nil
+ 	}
++	full := mode == outputFull
+ 
+ 	scale, err := kubernetes.NewCore(params).ResourcesScale(params.Context, gvk, ns, n, desiredScale, shouldScale)
+ 	if err != nil {
+-- 
+2.50.1 (Apple Git-155)
+

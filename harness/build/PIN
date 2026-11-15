@@ -14,3 +14,6 @@ KMS_COMMIT_DATE=2026-11-04T14:28:32-05:00
 MEASURED_GO="go version go1.26.11 darwin/arm64"
 # Upstream main used for the rebased series (experiment-patches/main-13bfb96f/), 2026-11-10T20:30:22Z.
 KMS_MAIN_SHA=13bfb96f1d97c6ac5ff5c1f2643a821c59af88cf
+# Tree of research + experiment-patches/corrections/ (build research-r2): the research build with the corrections
+# made after the measurement (15 November 2026). build.sh and CI check it; tag research-v0.1.2-r2 will hold it.
+RESEARCH_R2_TREE=338f812f1ed4994362d37d57d246a5ac95a55661

@@ -27,8 +27,8 @@ reviews here; the server source on `main` is the research build's.
 | Path | What it is |
 | --- | --- |
 | [`EXPERIMENT.md`](EXPERIMENT.md), [`CHANGES-EXPERIMENT.md`](CHANGES-EXPERIMENT.md), [`FINDINGS.md`](FINDINGS.md), [`NOTICE`](NOTICE), [`SECURITY.md`](SECURITY.md), [`SUPPORT.md`](SUPPORT.md) | This description, the change list, the findings register, attribution, reporting |
-| [`experiment-patches/`](experiment-patches/) | `bugfix/` (16) and `usability/` (19), each applied in its `SERIES` order to a clean v0.1.2 checkout; `main-13bfb96f/`, the same 35 changes rebased on upstream main |
-| [`harness/build/`](harness/build/) | `build.sh baseline\|fixed\|research`: builds each binary from this repository alone |
+| [`experiment-patches/`](experiment-patches/) | `bugfix/` (16) and `usability/` (19), each applied in its `SERIES` order to a clean v0.1.2 checkout; `corrections/` (1), made after the measurement, on top of them; `main-13bfb96f/`, the same changes rebased on upstream main |
+| [`harness/build/`](harness/build/) | `build.sh baseline\|fixed\|research\|research-r2`: builds each binary from this repository alone |
 | [`harness/`](harness/README.md) | The benchmark's task set as it was frozen: prompts, system prompt, seeds, mechanical checkers, cluster and server configuration, run helpers, the analysis script |
 | [`results/`](results/) | [`BENCHMARK.md`](results/BENCHMARK.md), the per-run data and analysis of the measured series, the records of the measured builds, the tool-list weights |
 | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | CI: both patch series applied with `git am` onto `upstream-v0.1.2` and checked against the build tags, and the three builds |
@@ -40,6 +40,7 @@ reviews here; the server source on `main` is the research build's.
 | baseline | `upstream-v0.1.2` | upstream v0.1.2 (`66553fed`), unmodified | `d65794e676f0d74b42649d34d2dc9db48a94600f` |
 | fixed | `fixed-v0.1.2` | baseline plus the 16 bug-fix commits | `934f9e8f678ffcbc25aadcb2aeaf460115715a3d` |
 | research | `research-v0.1.2` | the fixed build plus the 19 usability commits | `766d2c64d818af9f6e022ff768be2f99658d1d15` |
+| research-r2 | (tree pinned in `harness/build/PIN`) | the research build plus the corrections made after the measurement ([CHANGES-EXPERIMENT.md](CHANGES-EXPERIMENT.md#corrections-after-the-measurement)); not measured by the benchmark | `338f812f1ed4994362d37d57d246a5ac95a55661` |
 
 Binary sha256 of the builds that were **measured** (darwin/arm64, go1.26.11), and of the same builds made from this
 repository with [`harness/build/build.sh`](harness/build/build.sh):
@@ -49,6 +50,7 @@ repository with [`harness/build/build.sh`](harness/build/build.sh):
 | baseline | `931b5f5a4a3947f9a4ab329e4731434dd8a9722aee681526f84fafb85130e889` | `3b563b61f1922f67b05af42170b7247704a404861f0762bddef5fd2c8a340601` | `a8b4267fabcb29b8c55011652cc7d38fe2155a899015c08ee0753ebd29859a28` |
 | fixed | `bac15e1475c911b2ef43b06292a7a89d850fe3316f5eca614a8c8034c88af574` | `e6d67ca341f3664439b182971dc5add80c081de9887492afeba38e671b355f2e` | `9b2be870f2ea19cf1855509f64a7257c739be67b87f67b3d8d2ce73292530c4c` |
 | research | `167a5a650592d314ffbb24ddbe3e2b81c45fb49c13062acd53c02052d58ddb82` | `c6a41bb1c3e16a7f1d31968a0844ee64a524e06cd37c512aed03a42f1eef7118` | `7db8367877cc410667fa685d0f5d6e7130aaa20537f9aef34dd01634bab019d6` |
+| research-r2 | not measured | `a9a686078f04308129406032dd39c3567101ed3ab7c17eaa6b5bbf26f2a61cd9` | `9809c6f1f5d3c13b1304fbd2da3beaef8e342c20b28ff7b1603c041b778af4de` |
 
 **Why the hashes differ (DRV-3).** `go build` embeds the version-control stamp of the git repository it runs in. The
 measured binaries were built inside IsoKron's internal harness repository, so each carries that repository's
@@ -113,6 +115,14 @@ upstream made on purpose, most of all the second one (forced apply, upstream #79
 | usability/18 (C29, C16) | Default server instructions; descriptions say how apply, patch and charts behave |
 | usability/19 (C32) | `helm_install` annotated destructive and not idempotent |
 
+**Corrections after the measurement (build `research-r2`).** Made on 15 November 2026 after running the MCP Write
+Safety requirements on v0.1.2 and on the research build side by side; the benchmark below measured the research build
+without them.
+
+| Patch | Change |
+| --- | --- |
+| corrections/01 (RES-4) | The default write receipt also names each field the call changed, with its new value; the identity-only receipt is `output: compact` |
+
 ## What it measured
 
 The baseline and the research build (before/after; no fixed-only arm was run), on a local kind cluster (Kubernetes
@@ -164,7 +174,7 @@ are, treat the numbers here as IsoKron's records, checkable against the publishe
 git clone <this repository> kubernetes-mcp-experiment && cd kubernetes-mcp-experiment
 export GOTOOLCHAIN=local                       # never download a toolchain
 export PATH=/opt/homebrew/opt/go@1.26/bin:$PATH # macOS with Homebrew go@1.26; any go1.26.11 works
-for b in baseline fixed research; do harness/build/build.sh $b; done
+for b in baseline fixed research research-r2; do harness/build/build.sh $b; done
 shasum -a 256 harness/build/out/*/kubernetes-mcp-server
 ```
 

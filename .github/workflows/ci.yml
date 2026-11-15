@@ -1,8 +1,9 @@
 name: CI
 
-# Checks the experiment without a cluster, keys or models: both patch series apply with git am onto the upstream tag
-# and reproduce the build tags, every patch is listed in its SERIES, and the three builds reproduce the linux/amd64
-# hashes published in EXPERIMENT.md. Nothing is published and no secret is used.
+# Checks the experiment without a cluster, keys or models: the patch series apply with git am onto the upstream tag
+# and reproduce the build tags (and the corrections series the research-r2 tree pinned in harness/build/PIN), every
+# patch is listed in its SERIES, and the four builds reproduce the linux/amd64 hashes published in EXPERIMENT.md.
+# Nothing is published and no secret is used.
 on:
   push:
     branches: [main]
@@ -32,7 +33,7 @@ jobs:
         run: |
           set -euo pipefail
           series() { sed 's/#.*//; s/[[:space:]]//g' "$1/SERIES" | grep -v '^$'; }
-          for d in experiment-patches/bugfix experiment-patches/usability experiment-patches/main-13bfb96f/bugfix experiment-patches/main-13bfb96f/usability; do
+          for d in experiment-patches/bugfix experiment-patches/usability experiment-patches/corrections experiment-patches/main-13bfb96f/bugfix experiment-patches/main-13bfb96f/usability experiment-patches/main-13bfb96f/corrections; do
             for f in "$d"/*.patch; do
               series "$d" | grep -qxF "$(basename "$f")" || { echo "$f is not in its SERIES" >&2; exit 1; }
             done
@@ -49,6 +50,14 @@ jobs:
             echo "after $s: tree $got, tag $tag tree $want"
             [ "$got" = "$want" ]
           done
+          for p in $(series experiment-patches/corrections); do
+            git -C ../applied -c user.name=ci -c user.email=ci@ci.invalid am --quiet "$PWD/experiment-patches/corrections/$p" < /dev/null
+            echo "applied corrections/$p"
+          done
+          . harness/build/PIN
+          got="$(git -C ../applied rev-parse 'HEAD^{tree}')"
+          echo "after corrections: tree $got, RESEARCH_R2_TREE $RESEARCH_R2_TREE"
+          [ "$got" = "$RESEARCH_R2_TREE" ]
 
   build:
     runs-on: ubuntu-latest
@@ -67,13 +76,13 @@ jobs:
           go-version: '1.26.11'
           cache: false
 
-      - name: Build baseline, fixed and research and compare with EXPERIMENT.md
+      - name: Build baseline, fixed, research and research-r2 and compare with EXPERIMENT.md
         env:
           GOTOOLCHAIN: local
         run: |
           set -euo pipefail
-          for b in baseline fixed research; do harness/build/build.sh "$b"; done
-          for b in baseline fixed research; do
+          for b in baseline fixed research research-r2; do harness/build/build.sh "$b"; done
+          for b in baseline fixed research research-r2; do
             h="$(sha256sum "harness/build/out/$b/kubernetes-mcp-server" | cut -d' ' -f1)"
             grep -q "$h" EXPERIMENT.md && echo "$b $h: as published" || { echo "$b $h: not the published linux/amd64 hash" >&2; exit 1; }
           done

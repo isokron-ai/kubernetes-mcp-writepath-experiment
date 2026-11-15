@@ -1,0 +1,5 @@
+# Corrections series: the RESEARCH-R2 build is the research build (bugfix/SERIES, then usability/SERIES) plus these
+# patches, in this order (one file per line; '#' starts a comment). They correct the research build after its
+# measurement, from the MWS comparison of the vendor and research builds (15 November 2026). The benchmark in results/
+# measured the research build without them.
+01-RES4-feat-core-write-receipts-name-the-fields-the-call-c.patch

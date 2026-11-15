@@ -8,6 +8,11 @@ Based on `containers/kubernetes-mcp-server` at tag v0.1.2, commit `66553fed` (th
   order in its `SERIES` file. Each was offered upstream in its issue (#1658 to #1672, and a comment on #1584).
 - **Research build** (19 more commits, tag `research-v0.1.2`): the fixed build plus the usability changes and the
   design-gap changes. Patch files: [`experiment-patches/usability/`](experiment-patches/usability/).
+- **Corrections after the measurement** (build `research-r2`): the research build plus fixes made after the benchmark
+  was measured, from a comparison of v0.1.2 and the research build against the MCP Write Safety requirements on
+  15 November 2026. Patch files: [`experiment-patches/corrections/`](experiment-patches/corrections/); see
+  [Corrections after the measurement](#corrections-after-the-measurement). The benchmark measured `research`, not
+  `research-r2`.
 
 The harness and the write-ups call the builds `baseline`, `fixed` and `research`. The same 35 changes rebased on upstream
 main `13bfb96f` are in [`experiment-patches/main-13bfb96f/`](experiment-patches/main-13bfb96f/README.md).
@@ -176,6 +181,9 @@ Commit `287c3e0839`. Patch `experiment-patches/usability/01-C3-C25-feat-core-tri
 
 - **Why:** Write results returned whole objects; scale results did not say what changed.
 - **Change:** Write tools return a trimmed receipt by default (`output: full` restores the full object); scale results state the old and new replica counts.
+- **Corrected after the measurement:** this receipt carried no field of the write, so a caller could not see what the
+  call changed. In `research-r2` the default receipt also names each changed field with its new value; this receipt is
+  `output: compact` ([corrections/01](#corrections01-res-4-featcore-write-receipts-name-the-fields-the-call-changed)).
 - **Files:** `pkg/kubernetes/resources.go`, `pkg/toolsets/core/pods.go`, `pkg/toolsets/core/receipt.go`, `pkg/toolsets/core/resources.go`
 - **Tests and snapshots:** `pkg/mcp/pods_run_test.go`, `pkg/mcp/resources_test.go`, `pkg/mcp/testdata/toolsets-core-tools.json`, `pkg/mcp/testdata/toolsets-full-tools-multicluster.json`, `pkg/mcp/testdata/toolsets-full-tools-openshift.json`, `pkg/mcp/testdata/toolsets-full-tools.json`
 
@@ -341,6 +349,36 @@ Commit `c9220491b1`. Patch `experiment-patches/usability/19-C32-fix-helm-annotat
 - **Files:** `pkg/toolsets/helm/helm.go`
 - **Tests and snapshots:** `pkg/mcp/helm_test.go`, `pkg/mcp/testdata/toolsets-helm-tools.json`
 
+## Corrections after the measurement
+
+Made after the benchmark, on top of the research build (build `research-r2`, tree pinned as `RESEARCH_R2_TREE` in
+[`harness/build/PIN`](harness/build/PIN)). They come from running the MCP Write Safety requirements (MWS 0.9) on v0.1.2
+and on the research build side by side on 15 November 2026: each fixes a requirement the research build met less well
+than v0.1.2. The benchmark figures in [results/](results/) are for `research`, without them.
+
+### corrections/01 (RES-4): feat(core): write receipts name the fields the call changed
+
+Commit `1aedbc5783`. Patch `experiment-patches/corrections/01-RES4-feat-core-write-receipts-name-the-fields-the-call-c.patch`. Upstream: not filed (research build).
+
+- **Why:** The usability/01 receipt gave each written object's identity and version only. MWS-RES-4 (a SHOULD) asks
+  that a write's answer carry what the call changed, by name or new value; v0.1.2 met it by echoing the whole object,
+  and the research build fell below it on `resources_create_or_update` (3 write paths: `violated` on the research
+  build, `held` on v0.1.2).
+- **Change:** The default receipt (`output: receipt`) adds, under `changed`, each field the call changed with its new
+  value (null for a removed field). For an object that existed, these are the fields whose value differs between a
+  read made just before the write and the API's answer; for a created object (`created: true`), the fields the call
+  sent; if the earlier read fails, the fields the call sent, under `set`. Status and server-maintained metadata
+  (`resourceVersion`, `generation`, `managedFields`, `uid`, `creationTimestamp`) are left out; strings are cut at 256
+  characters and at most 50 fields are listed (the rest are counted). Applies to `resources_create_or_update`,
+  `resources_patch` and `pods_run`; a dry run keeps the identity-only receipt.
+- **Trade-off kept:** usability/01 trimmed the results for token cost (6,233 tokens of echoes in the first native
+  usability series). That receipt is still there as `output: compact`; `output: full` still returns whole objects.
+  The default answer stays a few lines for a one-field edit. Each recorded write makes one extra read (`get`) before
+  it; if that read is refused, the write still goes ahead. The tool list grows by 124 cl100k tokens (the longer
+  `output` description on 4 tools; core toolset snapshot, 10,261 → 10,385).
+- **Files:** `pkg/kubernetes/patch.go`, `pkg/kubernetes/pods.go`, `pkg/kubernetes/resources.go`, `pkg/toolsets/core/pods.go`, `pkg/toolsets/core/receipt.go`, `pkg/toolsets/core/resources.go`
+- **Tests and snapshots:** `pkg/toolsets/core/receipt_test.go` (new), `pkg/mcp/resources_test.go`, `pkg/mcp/resources_patch_test.go`, `pkg/mcp/pods_run_test.go`, `pkg/mcp/testdata/toolsets-core-tools.json`, `pkg/mcp/testdata/toolsets-full-tools-multicluster.json`, `pkg/mcp/testdata/toolsets-full-tools-openshift.json`, `pkg/mcp/testdata/toolsets-full-tools.json`. The new update, patch and `pods_run` subtests fail on the research build and pass with the change.
+
 ## Upstream tests changed on purpose
 
 Each in the commit that changes the behaviour, with the reason in its message: `events_list` timestamps (bugfix/14);
@@ -360,6 +398,10 @@ another suite left the OpenShift Route API registered; it passes in the full sui
 - `go vet ./...` and `gofmt -l` clean on all builds; every commit is gofmt-clean on its own. golangci-lint was not run
   (upstream's `make lint` installs it with `curl | sh`).
 - The fixed and research builds were each built twice with identical binary hashes.
+- `research-r2` (15 November 2026): `go test -count=1 ./...` 54 packages ok, `go test -race` on `pkg/kubernetes` and
+  `pkg/toolsets/core` ok, `go vet` and `gofmt -l` clean (go1.26.11); the rebased patch in
+  `experiment-patches/main-13bfb96f/corrections/` applies with `git am` on main `13bfb96f` plus the 35, and
+  `pkg/kubernetes`, `pkg/toolsets/core` and `pkg/mcp` pass there.
 - Regression series (scripted, no model): every frozen probe re-run on the fixed and research builds, 60 runs; every
   item came out as pre-registered (14 research runs needed a post-hoc, streamed audit-log check; see
   [FINDINGS.md](FINDINGS.md), column "Regression").
@@ -386,6 +428,7 @@ New tools in the research build: `resources_patch`, `resources_label`, `resource
   `disabled_tools` stop the server from starting; wrongly typed `params` and `networks` are errors; `events_list` prints
   RFC 3339 UTC.
 - Research build: server-side apply is not forced unless `force: true`; write results are receipts unless
-  `output: full`; unknown arguments are refused; deletes use `Background` propagation; `pods_run` re-runs need
+  `output: full` (in `research-r2` the default receipt also names the changed fields; `output: compact` gives the
+  identity-only receipt); unknown arguments are refused; deletes use `Background` propagation; `pods_run` re-runs need
   `replace: true`; `helm_list` lists every state; `helm_install` is annotated destructive; default server instructions
   are on when none are configured.
