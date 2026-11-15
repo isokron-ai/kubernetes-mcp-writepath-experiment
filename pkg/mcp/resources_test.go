@@ -1437,7 +1437,7 @@ func (s *ResourcesSuite) TestResourcesWriteReceipts() {
 		s.Equal(map[string]interface{}{"data.level": "debug"}, decoded[0].Object["changed"])
 		s.NotContains(decoded[0].Object, "created")
 		s.NotContains(text, "xxxx", "an unchanged field is not echoed")
-		s.Contains(text, "# Receipt: identity and version of each object, and under changed each field this call changed")
+		s.Contains(text, "# Receipt: identity, version and changed fields (new values; null = removed)")
 	})
 	s.Run("resources_create_or_update with output: compact returns identity and version only", func() {
 		result, err := s.CallTool("resources_create_or_update", map[string]interface{}{"resource": cm, "output": "compact"})

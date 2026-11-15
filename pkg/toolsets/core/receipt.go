@@ -248,7 +248,7 @@ func receiptNote(mode string) string {
 	case outputCompact:
 		return "# Receipt: identity and version of each object; pass output: full for the whole objects\n"
 	case outputReceipt:
-		return "# Receipt: identity and version of each object, and under changed each field this call changed with its new value (null: removed); pass output: full for the whole objects\n"
+		return "# Receipt: identity, version and changed fields (new values; null = removed); output: full for whole objects\n"
 	}
 	return ""
 }
