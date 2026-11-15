@@ -13,11 +13,11 @@ so the bug fixes' own effect is not measured. Data: [`2026-11-12-bench2/`](2026-
   KubeVirt v1.9.0 CRDs, Tekton Pipelines v1.16.0, local Helm charts. The server ran over stdio as a dedicated
   ServiceAccount that can write only in the run's own namespace and cannot read Secrets (task-specific extra roles are
   in the seeds). Toolsets `core` and `config`, plus `helm` for task F3.
-- **Agent:** one agent per run through the Claude Agent SDK 0.3.319 (Claude Code CLI 2.1.319), with the MCP server as
+- **Agent:** one agent per run through an agent SDK (SDK 0.3.319, CLI 2.1.319), with the MCP server as
   its only tool source, the system prompt in [`harness/bench/system.md`](../harness/bench/system.md), no effort or
-  thinking setting, at most 40 turns, a 1.00 USD cap per run. Models: `claude-opus-5-5` on sets A and B,
-  `claude-sonnet-5-5` on set A.
-- **Runs:** 5 per task and build (Opus A and B: 160; Sonnet A: 60), plus an observer-effect arm (Opus, set A, wire
+  thinking setting, at most 40 turns, a 1.00 USD cap per run. Models: a frontier model ("the main model") on sets A and
+  B, and a second, lower-priced model ("the second model") on set A.
+- **Runs:** 5 per task and build (main model A and B: 160; second model A: 60), plus an observer-effect arm (main model, set A, wire
   capture off, 2 per task and build: 24). 244 measured runs, strictly sequential, in a seeded order
   (`random.Random(20261112)`, [`harness/bench/order.json`](../harness/bench/order.json)), each in a fresh namespace
   seeded the same way. 300 runs were planned; the 56 spares were not needed.
@@ -47,7 +47,7 @@ Six ordinary jobs, with their prompts committed to git on 11 November 2026 at 00
 list; they were frozen on the chain only with this series. K3's manifest was written to the draft's description of its
 shape.
 
-Opus 5.5, baseline → research:
+Main model, baseline → research:
 
 | Measure | baseline | research | change |
 |---|---|---|---|
@@ -64,7 +64,7 @@ Opus 5.5, baseline → research:
 | Failed tool calls (total) | 11 | 0 | −100.0% |
 | False "done" claims | 0 | 0 | — |
 
-Per task (Opus); per-run median [min–max] from `runs.csv`:
+Per task (main model); per-run median [min–max] from `runs.csv`:
 
 | Task | Verified | Expected tokens per success | Change | Tool calls, median [min–max] | Cost per run, median [min–max] (USD) |
 |---|---|---|---|---|---|
@@ -77,7 +77,7 @@ Per task (Opus); per-run median [min–max] from `runs.csv`:
 
 Set A totals per build: baseline 292 tool calls, 2.9250 USD; research 119 calls, 1.8424 USD.
 
-**Sonnet 5.5, set A:** 30/30 → 30/30; expected tokens per success 53,651 → 56,030 (+4.4%); expected cost 0.0387 →
+**Second model, set A:** 30/30 → 30/30; expected tokens per success 53,651 → 56,030 (+4.4%); expected cost 0.0387 →
 0.0274 USD (−29.3%); tokens p50 43,034 → 36,703 (−14.7%); cost p50 0.0330 → 0.0182 (−44.8%); tool calls 7.40 → 3.70
 (−50.0%); turns 3.63 → 2.87 (−21.1%); result bytes 8,562 → 2,441 (−71.5%); wall 15.4 → 15.0 s (−2.6%); failed calls
 0 → 0. On K6 the research build used 53.8% more tokens per success while its cost fell (0.0771 → 0.0631); not
@@ -90,7 +90,7 @@ unchanged; F1b is new (K3's twin with `--- # comment` separators and `replicas: 
 the freeze and are labelled `bench_fix` in the results: F2 "the server created a Pod" and F5 "the server attempted a
 write", both read from the run's API audit log.
 
-Opus 5.5, as recorded:
+Main model, as recorded:
 
 | Measure | baseline | research | change |
 |---|---|---|---|
@@ -107,7 +107,7 @@ Opus 5.5, as recorded:
 | Failed tool calls (total) | 43 | 22 | −48.8% |
 | False "done" claims | 2 | 2 | +0.0% |
 
-Per task (Opus):
+Per task (main model):
 
 | Task | Native job | Verified | Expected tokens per success | Tool calls, median [min–max] | Cost per run, median [min–max] (USD) | Failed calls |
 |---|---|---|---|---|---|---|
@@ -138,13 +138,13 @@ Set B totals per build: baseline 658 tool calls, 5.7088 USD; research 265 calls,
   0.50 → 0.78 [0.65–0.87], expected tokens per success 148,584 → 117,368 (−21.0%), expected cost 0.2284 → 0.1122 USD
   (−50.9%), false "done" 2 → 0.
 
-## Where the change comes from (Opus; an accounting model, not an ablation)
+## Where the change comes from (main model; an accounting model, not an ablation)
 
 Each tool call gets one role from its transcript (recovery after a failed call, wait or poll, batch, multi-get, edit,
 other); a type's share is its change per verified success as a percentage of the baseline value, so each column adds
 up to the total. Method: [`2026-11-12-bench2/ANALYSIS.md`](2026-11-12-bench2/ANALYSIS.md) section 6.
 
-| Type | Set A tokens | Set A cost | Set B tokens | Set B cost | Set B post-hoc tokens | Set B post-hoc cost | Sonnet A tokens | Sonnet A cost |
+| Type | Set A tokens | Set A cost | Set B tokens | Set B cost | Set B post-hoc tokens | Set B post-hoc cost | Second model A tokens | Second model A cost |
 |---|---|---|---|---|---|---|---|---|
 | Bug fixes (completion) | +0.0% | +0.0% | −14.3% | −14.3% | −12.8% | −12.8% | +0.0% | +0.0% |
 | Smaller results | +1.2% | +1.7% | +1.0% | +1.7% | +0.9% | +1.5% | +2.0% | +1.8% |
@@ -159,13 +159,13 @@ up to the total. Method: [`2026-11-12-bench2/ANALYSIS.md`](2026-11-12-bench2/ANA
 On set A the bug-fix row is 0 (every task already passed on the baseline), so the whole saving there comes from the
 usability changes. On set B the bug-fix row is F3 (K8S-20); F9's gain (the lost update prevented) and post-hoc F2's are
 credited to "results that say what happened", that is, to usability changes, not to bug fixes. Prices fitted exactly
-from the reported costs: Opus input 4.00, output 20.00, cache write 5.00, cache read 0.20 USD per million tokens;
-Sonnet 2.00, 10.00, 2.50, 0.10. Why tokens are flat while cost falls: the larger tool list adds about 5.7 k tokens to
+from the reported costs: main model input 4.00, output 20.00, cache write 5.00, cache read 0.20 USD per million tokens;
+second model 2.00, 10.00, 2.50, 0.10. Why tokens are flat while cost falls: the larger tool list adds about 5.7 k tokens to
 every turn's context (first-turn context 11.8 k → 17.5 k), re-read from the prompt cache at the cheapest rate.
 
 ## Other measures
 
-- **Observer-effect control** (set A, Opus, wire capture off, 2 per task and build): 12/12 and 12/12 passed; mean cost
+- **Observer-effect control** (set A, main model, wire capture off, 2 per task and build): 12/12 and 12/12 passed; mean cost
   per attempt with capture on vs off: baseline 0.0975 vs 0.0995, research 0.0614 vs 0.0706 USD; turns 4.20 vs 4.50 and
   3.33 vs 3.50; wall 23.8 vs 24.7 s and 19.5 vs 21.2 s. The research build is still 29% cheaper with capture off. No
   observer effect on correctness was visible; no significance test.

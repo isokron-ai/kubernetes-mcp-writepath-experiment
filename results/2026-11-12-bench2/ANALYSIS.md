@@ -1,4 +1,5 @@
-> Copied unchanged from the analysis generated on 12 November 2026 at 04:50 UTC by `harness/bench/analysis/analyze.py`.
+> Copied from the analysis generated on 12 November 2026 at 04:50 UTC by `harness/bench/analysis/analyze.py`. On 15 November
+> 2026 the model names were replaced with neutral labels (main model, second model); nothing else changed.
 > Section references to `BENCHMARK.md` (for example "4.6") are to IsoKron's internal benchmark record; the public
 > write-up is [`../BENCHMARK.md`](../BENCHMARK.md). `scripts/analyze.py` is [`harness/bench/analysis/analyze.py`](../../harness/bench/analysis/analyze.py).
 
@@ -6,11 +7,11 @@
 
 Series `isokron-k8s-mcp-2026-11-bench2` · freeze `548f70273924f5838a344b350a8952a1a052d7dc7747a34e1fb0e236019e918b` (anchor `01a1cd5e-1883-7410-a422-63d56ef7af59`, commit `126753f`) · generated 2026-11-12T04:50Z
 Builds: baseline `931b5f5a4a3947f9a4ab329e4731434dd8a9722aee681526f84fafb85130e889`, research `167a5a650592d314ffbb24ddbe3e2b81c45fb49c13062acd53c02052d58ddb82` · toolkit mcp-audit `0c118956`
-Models: `claude-opus-5-5` (sets A and B), `claude-sonnet-5-5` (set A) · 244 measured runs, all completed (204 pass, 40 fail; none inconclusive or abandoned) · spend 18.88 USD measured + 3.06 USD dry run = 21.94 USD of 75 USD.
+Models: a frontier model, the main model (sets A and B), and a second, lower-priced model (set A) · 244 measured runs, all completed (204 pass, 40 fail; none inconclusive or abandoned) · spend 18.88 USD measured + 3.06 USD dry run = 21.94 USD of 75 USD.
 
 Correctness is the mechanical checker's verdict on the cluster, recorded on the evidence chain; nothing here is judged by a model. **Set A (pre-registered) and set B (friction-derived, favours the research build by construction) are reported separately and never added together.** Every number is baseline → research with the % change (research − baseline, over baseline). Tokens = input + output + cache creation + cache read, as `mcp-audit usability bench` counts them; cost = the provider-reported USD. Expected tokens (cost) per verified success = all attempts' tokens (cost) ÷ verified successes. Completion intervals are Wilson 95 %. The by-type method is in section 6; what went wrong is in `BENCHMARK.md` section 4.
 
-## 1. Headline (Opus 5.5)
+## 1. Headline (main model)
 
 | metric | set A baseline → research | change | set B baseline → research | change |
 |---|---|---|---|---|
@@ -35,7 +36,7 @@ What the headline says, in short:
   research build needs 59 % fewer tool calls and 21 % fewer model turns and returns 69 % fewer result bytes, and every
   failed call is gone (11 → 0). Tokens barely move because the research catalog adds about 5.7 k provider tokens to every
   turn (first-turn context 11.8 k → 17.5 k), re-read from the prompt cache; cache reads are the cheapest token class
-  (Opus: 0.20 USD per million against 5.00 for a cache write and 20.00 for output), so the cost falls while the token
+  (main model: 0.20 USD per million against 5.00 for a cache write and 20.00 for output), so the cost falls while the token
   count does not.
 - **Set B (favours research by construction): completion 50 % → 70 % (78 % with F2 corrected), cost per success −45 %
   (−51 %).** The gains are F3 (Helm into a namespace, 0/5 → 5/5, the K8S-20 fix) and F9 (concurrent edit, 0/5 → 5/5, no
@@ -43,7 +44,7 @@ What the headline says, in short:
 - Per attempt (not per success), set B's research runs use more tokens at the median (+34 %): the bigger catalog again,
   and research agents finishing tasks that baseline agents gave up on.
 
-## 2. By type of improvement (Opus 5.5)
+## 2. By type of improvement (main model)
 
 The change in expected tokens and cost per verified success, split by the type of change it comes from (section 6).
 Positive = more for the research build (a cost); the catalog row is the +54 % tools/list on the other side. "Share" is
@@ -167,7 +168,7 @@ Each task carries the change types it exercises; mean of the per-task % changes 
 no success on one build left out and counted as n/a).
 
 
-#### Opus, set A
+#### Main model, set A
 
 | type | tasks | mean % change, tokens / success | mean % change, cost / success | n/a | successes baseline -> research |
 |---|---|---|---|---|---|
@@ -178,7 +179,7 @@ no success on one build left out and counted as n/a).
 | waits | K1, K3, K4, K6 | +1.8 % | -29.5 % | 0 | 20 -> 20 |
 | truthful_results | K2, K6 | +7.8 % | -25.3 % | 0 | 10 -> 10 |
 
-#### Opus, set B
+#### Main model, set B
 
 | type | tasks | mean % change, tokens / success | mean % change, cost / success | n/a | successes baseline -> research |
 |---|---|---|---|---|---|
@@ -191,7 +192,7 @@ no success on one build left out and counted as n/a).
 | truthful_results | F1b, F2, F3, F4, F5, F8, F9 | +34.5 % | +4.7 % | 5 | 10 -> 20 |
 
 
-## 3. Per task (Opus 5.5)
+## 3. Per task (main model)
 
 
 #### Set A
@@ -224,7 +225,7 @@ no success on one build left out and counted as n/a).
 F2 with the corrected criterion: baseline 0/5, research 4/5 (or-f2-3 failed the native criteria too). All failed attempts
 with the checks that failed: `analysis-output/TABLES.md` ("Every failed attempt").
 
-## 4. Second model: Sonnet 5.5, set A
+## 4. Second model, set A
 
 
 | metric | baseline → research | change |
@@ -242,7 +243,7 @@ with the checks that failed: `analysis-output/TABLES.md` ("Every failed attempt"
 | failed tool calls (total) | 0 → 0 | - |
 | false "done" claims (claimed done, checker failed) | 0 → 0 | - |
 
-### Sonnet set A by type of improvement, tokens
+### Second model, set A, by type of improvement, tokens
 
 baseline 53,651 -> research 56,030: 2,379 (+4.4 %); completion part 0, token part 2,379
 
@@ -258,7 +259,7 @@ baseline 53,651 -> research 56,030: 2,379 (+4.4 %); completion part 0, token par
 | Unattributed | -17,707 | -33.0 % |
 | **total** | 2,379 | +4.4 % |
 
-### Sonnet set A by type of improvement, cost (USD)
+### Second model, set A, by type of improvement, cost (USD)
 
 baseline 0.0387 -> research 0.0274: -0.0114 (-29.3 %); completion part 0.0000, token part -0.0114
 
@@ -285,18 +286,18 @@ baseline 0.0387 -> research 0.0274: -0.0114 (-29.3 %); completion part 0.0000, t
 | K5 | batch, smaller_results | 5/5 | 5/5 | 66,121 | 57,403 | -13.2 % | 7 | 7 | 0.0543 | 0.0338 |
 | K6 | batch, multi_get, truthful_results, waits | 5/5 | 5/5 | 87,559 | 134,701 | +53.8 % | 27 | 11 | 0.0771 | 0.0631 |
 
-Sonnet completes every set A task on both builds too; the research build halves its calls and cuts cost per success
+The second model completes every set A task on both builds too; the research build halves its calls and cuts cost per success
 by 29 %. K6 on research costs more tokens per success (+54 %) while its cost still falls (−18 %); the per-run rows are in
 `analysis-output/RUNS.md` (not investigated further here).
 
-## 5. Observer-effect control (set A, Opus, capture off)
+## 5. Observer-effect control (set A, main model, capture off)
 
 
 | build | arm | attempts | verified | completion (Wilson 95 %) | cost per attempt (mean) | model turns (mean) | wall s (mean) |
 |---|---|---|---|---|---|---|---|
-| baseline | capture on (opus) | 30 | 30 | 1.00 [0.89-1.00] | 0.0975 | 4.20 | 23.8 |
+| baseline | capture on (main model) | 30 | 30 | 1.00 [0.89-1.00] | 0.0975 | 4.20 | 23.8 |
 | baseline | capture off (observer) | 12 | 12 | 1.00 [0.76-1.00] | 0.0995 | 4.50 | 24.7 |
-| research | capture on (opus) | 30 | 30 | 1.00 [0.89-1.00] | 0.0614 | 3.33 | 19.5 |
+| research | capture on (main model) | 30 | 30 | 1.00 [0.89-1.00] | 0.0614 | 3.33 | 19.5 |
 | research | capture off (observer) | 12 | 12 | 1.00 [0.76-1.00] | 0.0706 | 3.50 | 21.2 |
 
 
@@ -341,8 +342,8 @@ Result tokens of a call ~ result characters / 3.0. A turn's output ~ the growth 
 the results it received (the transcript carries each call's context but not its final output count).
 ```
 
-Prices fitted from the reported costs (exact, residual < 1e-15 USD): Opus input 4.00, output 20.00, cache write 5.00,
-cache read 0.20 USD per million tokens; Sonnet 2.00, 10.00, 2.50, 0.10. The cost split prices each part by the token
+Prices fitted from the reported costs (exact, residual < 1e-15 USD): main model input 4.00, output 20.00, cache write 5.00,
+cache read 0.20 USD per million tokens; second model 2.00, 10.00, 2.50, 0.10. The cost split prices each part by the token
 class it moves (re-reads at the cache-read price, new content once at the cache-write price, the issuing turn's output at
 the output price); the remainder is unattributed.
 
@@ -359,5 +360,5 @@ the output price); the remainder is unattributed.
   `mcp-audit usability bench` therefore refuses it, and these numbers come from `scripts/analyze.py` (cross-checked
   against the toolkit's per-task figures on relabelled copies).
 - F2's recorded verdicts carry our checker defect; the post-hoc view is labelled and shown next to them.
-- One client (Claude Agent SDK through mcp-audit agent), isolation dev (operator user on macOS), one cluster (kind,
+- One client (an agent SDK through mcp-audit agent), isolation dev (operator user on macOS), one cluster (kind,
   Kubernetes 1.37.0), toolsets core + config (+ helm for F3). No compaction arm.

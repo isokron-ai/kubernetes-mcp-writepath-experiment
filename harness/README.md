@@ -72,5 +72,5 @@ Everything here runs against a disposable local kind cluster only.
    `check_b.py`). The checkers read state as the admin identity and never read the agent's answer. `bench/runctl.py`
    and the checkers keep their state under `state/bench/` inside this directory.
 
-The measured runs used the Claude Agent SDK 0.3.319 with the MCP server as the only tool source, at most 40 turns and
+The measured runs used an agent SDK (0.3.319) with the MCP server as the only tool source, at most 40 turns and
 a 1.00 USD cap per run; see [`../results/BENCHMARK.md`](../results/BENCHMARK.md) for the rest of the method.

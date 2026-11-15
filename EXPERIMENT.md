@@ -127,13 +127,13 @@ without them.
 
 The baseline and the research build (before/after; no fixed-only arm was run), on a local kind cluster (Kubernetes
 1.37.0), never a hosted or real cluster. 244 measured runs on 12 November 2026 (01:27–04:45 UTC), one agent per run
-through the Claude Agent SDK 0.3.319 with the server as the only tool source, toolsets `core` and `config` (plus `helm`
+through an agent SDK (0.3.319) with the server as the only tool source, toolsets `core` and `config` (plus `helm`
 for one task), a fresh namespace per run, a seeded run order, and correctness from a mechanical checker reading the
 cluster as a separate identity; no model judges anything. The harness was frozen and timestamped before the first
 measured run. 204 runs passed and 40 failed; none was inconclusive or abandoned.
 
-**Set A, pre-registered** (six ordinary jobs committed to git before any change was designed; the fair test), Claude
-Opus 5.5 (`claude-opus-5-5`), 30 runs per build:
+**Set A, pre-registered** (six ordinary jobs committed to git before any change was designed; the fair test), a
+frontier model (the main model), 30 runs per build:
 
 | Measure | v0.1.2 | research build | change |
 | --- | --- | --- | --- |
@@ -145,11 +145,11 @@ Opus 5.5 (`claude-opus-5-5`), 30 runs per build:
 | Result bytes per run (mean) | 9,676 | 3,034 | −68.6% |
 | Failed tool calls (total) | 11 | 0 | |
 
-With Claude Sonnet 5.5 on set A: 30/30 on both builds, expected cost per success −29.3%, tokens +4.4%, tool calls per
+With a second, lower-priced model on set A: 30/30 on both builds, expected cost per success −29.3%, tokens +4.4%, tool calls per
 run 7.40 → 3.70.
 
 **Set B, friction-derived** (nine jobs from the usability pass plus one new twin; they favour the research build by
-construction and are never pooled with set A), Opus, 50 runs per build: 25/50 → 35/50 correct as recorded, expected
+construction and are never pooled with set A), the main model, 50 runs per build: 25/50 → 35/50 correct as recorded, expected
 cost per success −45.3%, tokens −12.0%, tool calls per run 13.16 → 5.30. One of our checker criteria (task F2) was
 wrong; with a labelled post-hoc correction set B is 25/50 → 39/50.
 
